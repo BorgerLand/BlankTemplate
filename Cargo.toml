@@ -1,0 +1,95 @@
+##--Game crate--##
+
+[package]
+name = "game"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/simulation/lib.rs"
+
+[features]
+server = ["borger/server"]
+client = ["borger/client"]
+session_replay = []
+
+[dependencies]
+borger = { path = "borger/engine" }
+log.workspace = true
+glam.workspace = true
+rapier3d.workspace = true
+
+##--Profiles--##
+
+#dev build profile
+[profile.server-dev]
+inherits = "dev"
+opt-level = 3 #optimize server for speed
+[profile.client-dev]
+inherits = "dev"
+opt-level = "s" #optimize client for size
+
+#release build profile: even more optimizations
+[profile.release]
+strip = "symbols" #no more debuggin
+# Compile the entire crate as one unit.
+# Slows compile times, marginal improvements.
+codegen-units = 1
+# Do a second optimization pass over the entire program, including dependencies.
+# Slows compile times, marginal improvements.
+lto = "fat"
+[profile.server-release]
+inherits = "release"
+opt-level = 3 #optimize server for speed
+[profile.client-release]
+inherits = "release"
+opt-level = "s" #optimize client for size
+
+##--Workspace--##
+
+[workspace]
+resolver = "2"
+members = [
+	"borger/engine",
+	"borger/server",
+	"borger/client/rs",
+	"borger/procmac"
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+
+[workspace.dependencies]
+#shared
+log = { version = "*", default-features = false }
+glam = { version = "0.30.10", default-features = false, features = ["std"] } #match version to rapier
+atomicbox = { version = "*", default-features = false }
+tokio = { version = "*", default-features = false, features = ["rt"] }
+num_enum = { version = "*", default-features = false }
+rapier3d = { version = "*", default-features = false, features = ["simd-stable", "dim3", "f32"] } #can't use simd-unstable https://github.com/dimforge/simba/issues/80
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+
+#server
+wtransport = { version = "*", default-features = false, features = ["ring", "self-signed"] }
+simple_logger = { version = "*", default-features = false, features = ["colors"] }
+clap = { version = "*", default-features = false, features = ["std", "derive", "color", "error-context", "help", "suggestions", "usage"] }
+tokio-tungstenite = { version = "*", default-features = false, features = ["rustls-tls-webpki-roots"] }
+tokio-rustls = { version = "*", default-features = false }
+futures-util = { version = "*", default-features = false }
+
+#client
+console_log = { version = "*", default-features = false, features = ["color"] }
+js-sys = { version = "*", default-features = false }
+web-sys = { version = "*", default-features = false }
+postcard = { version = "*", default-features = false, features = ["alloc"] }
+wasm-bindgen = { version = "*", default-features = false }
+
+#procmac
+proc-macro2 = { version = "*", default-features = false }
+quote = { version = "*", default-features = false }
+syn = { version = "*", default-features = false }
+
+#wasm-specific shims (used in borger crate to make client happier)
+wasm_thread = { git = "https://github.com/buttercrab/wasm_thread.git", branch = "patch-1", default-features = false, features = ["es_modules"] } #https://github.com/chemicstry/wasm_thread/pull/33
+web-time = { version = "*", default-features = false }

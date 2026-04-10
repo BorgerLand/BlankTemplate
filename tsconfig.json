@@ -1,0 +1,11 @@
+{
+	"include": ["**/*.config.ts"],
+	"compilerOptions": {
+		"lib": ["ESNext"],
+		"jsx": "preserve",
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"noEmit": true,
+		"allowImportingTsExtensions": true
+	}
+}

@@ -1,0 +1,13 @@
+{
+	"devDependencies": {
+		"@types/bun": "*",
+		"@vitejs/plugin-basic-ssl": "*",
+		"@webgpu/types": "*",
+		"concurrently": "*",
+		"typescript": "*",
+		"vite": "*",
+		"vite-plugin-checker": "*",
+		"zod": "*"
+	},
+	"type": "module"
+}

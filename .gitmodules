@@ -1,0 +1,3 @@
+[submodule "borger"]
+	path = borger
+	url = https://github.com/BorgerLand/Borger.git

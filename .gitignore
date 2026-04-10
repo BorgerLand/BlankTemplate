@@ -1,0 +1,9 @@
+#tool-generated
+node_modules
+target
+release
+assets/devcert.json
+
+#ide config
+.vscode/launch.json
+.vscode/settings.json
