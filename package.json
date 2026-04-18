@@ -4,6 +4,7 @@
 		"@vitejs/plugin-basic-ssl": "*",
 		"@webgpu/types": "*",
 		"concurrently": "*",
+		"prettier": "*",
 		"typescript": "*",
 		"vite": "*",
 		"vite-plugin-checker": "*",
