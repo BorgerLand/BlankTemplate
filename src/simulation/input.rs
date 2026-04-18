@@ -39,6 +39,7 @@ pub fn validate(_sus: &Input) -> Input {
 //still in the same position. discrete taps (eg. reload, talk to
 //npc) are normally safe to predict false or else you risk
 //triggering some action twice
+#[server]
 pub fn server_predict_late(
 	_prv: &Input,
 	_state: &SimulationState,
