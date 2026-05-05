@@ -1,7 +1,21 @@
+//this tsconfig exists only to make the ide's language server happy.
+//when actually building, a stricter set of rules applies to separate
+//dom vs. bun types properly. this is a workaround for language server's
+//tsconfig file discovery mechanism being too dumb
 {
-	"include": ["**/*.config.ts"],
+	"include": ["**/*.ts", "**/*.tsx"],
 	"compilerOptions": {
-		"lib": ["ESNext"],
+		"lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+		"types": ["bun", "vite/client"],
+		"paths": {
+			"@borger/code_generator/*": ["./borger/code_generator/src/*"],
+			"@borger/rs": ["./borger/client/rs/pkg"],
+			"@borger/ts": ["./borger/client/ts/src"],
+			"@borger/ts/*": ["./borger/client/ts/src/*"],
+			"@game/*": ["./src/presentation/*"]
+		},
+
+		//inherited
 		"jsx": "preserve",
 		"skipLibCheck": true,
 		"isolatedModules": true,

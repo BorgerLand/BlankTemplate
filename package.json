@@ -1,11 +1,16 @@
 {
 	"devDependencies": {
+		"@eslint/js": "*",
 		"@types/bun": "*",
 		"@vitejs/plugin-basic-ssl": "*",
 		"@webgpu/types": "*",
 		"concurrently": "*",
+		"eslint-config-prettier": "*",
+		"eslint-plugin-prettier": "*",
+		"jiti": "*",
 		"prettier": "*",
 		"typescript": "*",
+		"typescript-eslint": "*",
 		"vite": "*",
 		"vite-plugin-checker": "*",
 		"zod": "*"

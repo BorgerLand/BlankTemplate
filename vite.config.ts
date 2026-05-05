@@ -1,22 +1,32 @@
 import { defineConfig } from "vite";
 import * as path from "path";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import tsconfig from "./src/tsconfig.json";
+import tsconfig from "./tsconfig.presentation.json";
 import checker from "vite-plugin-checker";
 
 //https://vite.dev/config/
 export default defineConfig({
 	publicDir: "assets",
-	plugins: [basicSsl(), checker({ typescript: { tsconfigPath: "src/tsconfig.json" }, enableBuild: true })],
+	plugins: [
+		basicSsl(),
+
+		//https://github.com/oven-sh/bun/issues/9998
+		...(process.env.NODE_ENV !== "production"
+			? [checker({ typescript: { tsconfigPath: "tsconfig.presentation.json" } })]
+			: []),
+	],
 	resolve: {
 		alias: Object.fromEntries(
 			Object.entries(tsconfig.compilerOptions.paths).map(([key, [value]]) => [
 				key.replace(/\/\*$/, ""),
-				path.resolve("src/" + value.replace(/\/\*$/, "")),
+				path.resolve(value.replace(/\/\*$/, "")),
 			]),
 		),
 	},
 	server: {
+		watch: {
+			ignored: (p) => p.startsWith(path.resolve("target") + path.sep),
+		},
 		headers: {
 			"Cross-Origin-Opener-Policy": "same-origin",
 			"Cross-Origin-Embedder-Policy": "require-corp",
