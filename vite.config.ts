@@ -7,14 +7,7 @@ import checker from "vite-plugin-checker";
 //https://vite.dev/config/
 export default defineConfig({
 	publicDir: "assets",
-	plugins: [
-		basicSsl(),
-
-		//https://github.com/oven-sh/bun/issues/9998
-		...(process.env.NODE_ENV !== "production"
-			? [checker({ typescript: { tsconfigPath: "tsconfig.presentation.json" } })]
-			: []),
-	],
+	plugins: [basicSsl(), checker({ typescript: { tsconfigPath: "tsconfig.presentation.json" } })],
 	resolve: {
 		alias: Object.fromEntries(
 			Object.entries(tsconfig.compilerOptions.paths).map(([key, [value]]) => [
