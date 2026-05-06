@@ -1,4 +1,4 @@
 #nightly required for multithreading
 [toolchain]
-channel = "nightly-2026-04-07" #make sure to restart ide's rust analyzer after updating
+channel = "nightly-2026-05-06" #make sure to restart ide's rust analyzer after updating
 components = ["rust-src"]
