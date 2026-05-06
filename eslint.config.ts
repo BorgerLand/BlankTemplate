@@ -34,6 +34,7 @@ export default [
 			"no-mixed-spaces-and-tabs": "off",
 			"preserve-caught-error": "off",
 			"no-undef": "off", //tsc handles this better than eslint
+			"@typescript-eslint/no-explicit-any": "off",
 
 			"no-console": "error",
 			eqeqeq: "error",
