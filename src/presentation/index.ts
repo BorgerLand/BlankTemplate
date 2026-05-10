@@ -6,6 +6,5 @@ await Borger.play(function game() {
 	//regardless of what the simulation is doing. remember
 	//that rollbacks/mispredicts/reconnects can wipe out
 	//data that was already rendered in a previous frame
-	//eslint-disable-next-line @typescript-eslint/no-unused-vars
-	return function presentationLoop(dt, input, output) {};
+	return function presentationLoop(_dt, _input, _output) {};
 });
