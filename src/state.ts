@@ -1,10 +1,9 @@
-import type { SimulationState } from "@borger/code_generator/state_schema.ts";
+import type { State } from "@borger/code_generator/state_schema.ts";
 
 //make sure field names are snake_case or else you will anger rustc
 export default {
 	clients: {
 		netVisibility: "public",
-		presentation: "clone",
 		type: "SlotMap",
 		typeName: "Client",
 		content: {
@@ -25,4 +24,4 @@ export default {
 			},
 		},
 	},
-} satisfies SimulationState;
+} satisfies State;

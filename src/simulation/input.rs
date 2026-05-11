@@ -42,7 +42,7 @@ pub fn validate(_sus: &Input) -> Input {
 #[server]
 pub fn server_predict_late(
 	_prv: &Input,
-	_state: &SimulationState,
+	_state: &State,
 	_client_id: usize32,
 	_is_timed_out: bool,
 ) -> Input {
@@ -52,7 +52,7 @@ pub fn server_predict_late(
 //the client needs to continue simulating even if the
 //presentation thread stuttered and missed a tick. the same
 //rules apply here as server_predict_late
-pub fn client_predict_late(_prv: &Input, _state: &SimulationState, _client_id: usize32) -> Input {
+pub fn client_predict_late(_prv: &Input, _state: &State, _client_id: usize32) -> Input {
 	Input {}
 }
 

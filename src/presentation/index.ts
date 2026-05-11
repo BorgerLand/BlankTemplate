@@ -6,5 +6,5 @@ await Borger.play(function game() {
 	//regardless of what the simulation is doing. remember
 	//that rollbacks/mispredicts/reconnects can wipe out
 	//data that was already rendered in a previous frame
-	return function presentationLoop(_dt, _input, _output) {};
+	return function presentationLoop(_dt, _ctx) {};
 });
