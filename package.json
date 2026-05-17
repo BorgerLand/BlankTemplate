@@ -1,14 +1,14 @@
 {
 	"devDependencies": {
 		"@eslint/js": "*",
-		"@types/bun": "*",
+		"@types/node": "*",
 		"@vitejs/plugin-basic-ssl": "*",
 		"@webgpu/types": "*",
 		"concurrently": "*",
 		"eslint-config-prettier": "*",
 		"eslint-plugin-prettier": "*",
-		"jiti": "*",
 		"prettier": "*",
+		"tsx": "*",
 		"typescript": "*",
 		"typescript-eslint": "*",
 		"vite": "*",

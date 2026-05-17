@@ -7,7 +7,7 @@
 		//a workaround for language server's (in)ability to look up which tsconfig
 		//applies to the currently open ts file
 		"lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
-		"types": ["bun", "vite/client"],
+		"types": ["node", "vite/client"],
 		"paths": {
 			"@borger/code_generator/*": ["./borger/code_generator/src/*"],
 			"@borger/rs": ["./borger/client/rs/pkg"],

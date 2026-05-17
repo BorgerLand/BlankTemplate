@@ -14,15 +14,10 @@ export default [
 	{
 		files: ["**/*.{ts,tsx}"],
 		languageOptions: {
-			parser: tseslint.parser,
 			parserOptions: {
 				project: ["tsconfig.presentation.json", "borger/tsconfig.json"],
 				tsconfigRootDir: import.meta.dirname,
 			},
-			sourceType: "module",
-		},
-		plugins: {
-			"@typescript-eslint": tseslint.plugin,
 		},
 		settings: {
 			react: {
@@ -30,15 +25,14 @@ export default [
 			},
 		},
 		rules: {
-			"no-empty": "off",
-			"no-mixed-spaces-and-tabs": "off",
-			"preserve-caught-error": "off",
-			"no-undef": "off", //tsc handles this better than eslint
 			"@typescript-eslint/no-explicit-any": "off",
 
 			"no-console": "error",
 			eqeqeq: "error",
-			"no-var": "error",
+			"require-await": "error",
+			"no-nested-ternary": "error",
+			"@typescript-eslint/consistent-type-imports": "error",
+
 			"no-mixed-operators": [
 				"error",
 				{
@@ -57,9 +51,6 @@ export default [
 					destructuring: "all",
 				},
 			],
-			"require-await": "error",
-			"no-nested-ternary": "error",
-			"@typescript-eslint/consistent-type-imports": "error",
 			"@typescript-eslint/no-unused-vars": [
 				"error",
 				{
