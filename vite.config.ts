@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import * as path from "path";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import tsconfig from "./tsconfig.presentation.json";
+import tsconfig from "./tsconfig.presentation.json" with { type: "json" };
 import checker from "vite-plugin-checker";
 
 //https://vite.dev/config/

@@ -3,8 +3,8 @@
 	"compilerOptions": {
 		//combine lib+types+paths from tsconfig.presentation.json+borger/tsconfig.json
 		//in order to make the ide's language server happy. when actually building, a
-		//stricter set of rules applies to separate dom vs. bun types properly. this is
-		//a workaround for language server's (in)ability to look up which tsconfig
+		//stricter set of rules applies to separate dom vs. node types properly. this
+		//is a workaround for language server's (in)ability to look up which tsconfig
 		//applies to the currently open ts file
 		"lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
 		"types": ["node", "vite/client"],
@@ -17,6 +17,7 @@
 		},
 
 		//inherited
+		"module": "esnext",
 		"jsx": "preserve",
 		"skipLibCheck": true,
 		"isolatedModules": true,

@@ -63,11 +63,11 @@ edition = "2024"
 [workspace.dependencies]
 #shared
 log = { version = "*", default-features = false }
-glam = { version = "0.30", default-features = false, features = ["std"] } #glam version must what's brought in by rapier+glamx
+glam = { version = "0.33", default-features = false, features = ["std"] } #glam version must match what's brought in by rapier+glamx
 atomicbox = { version = "*", default-features = false }
 tokio = { version = "*", default-features = false, features = ["rt"] }
 num_enum = { version = "*", default-features = false }
-rapier3d = { version = "*", default-features = false, features = ["simd-nightly", "dim3", "f32"] }
+rapier3d = { version = "*", default-features = false, features = ["simd-nightly", "dim3", "f32", "alloc"] }
 serde = { version = "*", default-features = false, features = ["std", "derive"] }
 
 #server
@@ -93,6 +93,3 @@ syn = { version = "*", default-features = false }
 #wasm-specific shims (used in borger crate to make client happier)
 wasm_thread = { git = "https://github.com/buttercrab/wasm_thread.git", branch = "patch-1", default-features = false, features = ["es_modules"] } #https://github.com/chemicstry/wasm_thread/pull/33
 web-time = { version = "*", default-features = false }
-
-[patch.crates-io]
-simba = { git = "https://github.com/aabizri/simba", rev = "cd656c434b55c59744d7c181cd8f44d1dabd0e8d" } #https://github.com/dimforge/simba/pull/79
