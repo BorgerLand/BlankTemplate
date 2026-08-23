@@ -88,7 +88,7 @@ wasm-bindgen = { version = "*", default-features = false }
 #procmac
 proc-macro2 = { version = "*", default-features = false }
 quote = { version = "*", default-features = false }
-syn = { version = "*", default-features = false }
+syn = { version = "*", default-features = false, features = ["full"] }
 
 #wasm-specific shims (used in borger crate to make client happier)
 wasm_thread = { git = "https://github.com/buttercrab/wasm_thread.git", branch = "patch-1", default-features = false, features = ["es_modules"] } #https://github.com/chemicstry/wasm_thread/pull/33
