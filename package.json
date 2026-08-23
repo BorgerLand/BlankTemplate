@@ -1,7 +1,7 @@
 {
 	"devDependencies": {
 		"@eslint/js": "*",
-		"@types/node": "*",
+		"@types/node": "^24.13.3",
 		"@vitejs/plugin-basic-ssl": "*",
 		"@webgpu/types": "*",
 		"concurrently": "*",
@@ -15,5 +15,8 @@
 		"vite-plugin-checker": "*",
 		"zod": "*"
 	},
-	"type": "module"
+	"type": "module",
+	"allowScripts": {
+		"esbuild@0.28.2": true
+	}
 }
