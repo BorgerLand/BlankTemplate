@@ -1,4 +1,4 @@
-##--Game crate--##
+##---Game crate---##
 
 [package]
 name = "game"
@@ -19,7 +19,7 @@ log.workspace = true
 glam.workspace = true
 rapier3d.workspace = true
 
-##--Profiles--##
+##---Profiles---##
 
 #dev build profile
 [profile.server-dev]
@@ -45,7 +45,7 @@ opt-level = 3 #optimize server for speed
 inherits = "release"
 opt-level = "s" #optimize client for size
 
-##--Workspace--##
+##---Workspace---##
 
 [workspace]
 resolver = "2"
@@ -61,35 +61,6 @@ version = "0.0.0"
 edition = "2024"
 
 [workspace.dependencies]
-#shared
 log = { version = "*", default-features = false }
 glam = { version = "0.33", default-features = false, features = ["std"] } #glam version must match what's brought in by rapier+glamx
-atomicbox = { version = "*", default-features = false }
-tokio = { version = "*", default-features = false, features = ["rt"] }
-num_enum = { version = "*", default-features = false }
 rapier3d = { version = "*", default-features = false, features = ["simd-nightly", "dim3", "f32", "alloc"] }
-serde = { version = "*", default-features = false, features = ["std", "derive"] }
-
-#server
-wtransport = { version = "*", default-features = false, features = ["ring", "self-signed"] }
-simple_logger = { version = "*", default-features = false, features = ["colors"] }
-clap = { version = "*", default-features = false, features = ["std", "derive", "color", "error-context", "help", "suggestions", "usage"] }
-tokio-tungstenite = { version = "*", default-features = false, features = ["rustls-tls-webpki-roots"] }
-tokio-rustls = { version = "*", default-features = false }
-futures-util = { version = "*", default-features = false }
-
-#client
-console_log = { version = "*", default-features = false, features = ["color"] }
-js-sys = { version = "*", default-features = false }
-web-sys = { version = "*", default-features = false }
-postcard = { version = "*", default-features = false, features = ["alloc"] }
-wasm-bindgen = { version = "*", default-features = false }
-
-#procmac
-proc-macro2 = { version = "*", default-features = false }
-quote = { version = "*", default-features = false }
-syn = { version = "*", default-features = false, features = ["full"] }
-
-#wasm-specific shims (used in borger crate to make client happier)
-wasm_thread = { git = "https://github.com/buttercrab/wasm_thread.git", branch = "patch-1", default-features = false, features = ["es_modules"] } #https://github.com/chemicstry/wasm_thread/pull/33
-web-time = { version = "*", default-features = false }
