@@ -1,0 +1,17 @@
+name: CLI Lifecycle Test
+
+on:
+    workflow_dispatch:
+    pull_request:
+
+jobs:
+    test-install:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Run borger installer
+              run: |
+                  curl -fsSL https://eat.borger.dev | bash -s -- -y
+                  echo "$HOME/.borger" >> "$GITHUB_PATH"
+
+            - name: hello there
+              run: borger help
