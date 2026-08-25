@@ -8,10 +8,271 @@ jobs:
     test-install:
         runs-on: ubuntu-latest
         steps:
-            - name: Run borger installer
+            - name: Eat borger
               run: |
                   curl -fsSL https://eat.borger.dev | bash -s -- -y
                   echo "$HOME/.borger" >> "$GITHUB_PATH"
 
-            - name: hello there
-              run: borger help
+            - name: Install borger dev harness
+              run: |
+                  mkdir -p "$RUNNER_TEMP/bin"
+                  cat > "$RUNNER_TEMP/bin/borger_dev_harness" <<'borger_dev_harness'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+
+                  #a borger dev server that outlives the shell which started it, so one CI
+                  #step can bring it up and a later one can take it down. everything the
+                  #two commands need to find each other again lives in a state directory
+                  #rather than in this process.
+                  #
+                  #cli.sh only draws its status bar on a terminal and a runner hasn't got
+                  #one, so dev is run under a pty and the bar is read back out of the
+                  #typescript that pty writes. two readys on the last line is the server
+                  #and the client both up, which is the whole definition of started here:
+                  #the bar is the only place that says so about both halves at once.
+                  #
+                  #  borger_dev_harness up    start it here, return once the bar says ready twice
+                  #  borger_dev_harness down  ctrl+c it, or fail if it isn't up
+
+                  STATE="${borger_dev_harness_STATE:-${RUNNER_TEMP:-/tmp}/borger_dev_harness}"
+                  LOG="$STATE/dev.log"
+                  KEYS="$STATE/keys"
+                  PIDFILE="$STATE/pid"
+                  HOLDFILE="$STATE/holder"
+
+                  DEV_CMD="${borger_dev_harness_CMD:-borger dev}"
+                  UP_TIMEOUT="${borger_dev_harness_TIMEOUT:-270}"
+                  DOWN_TIMEOUT="${borger_dev_harness_DOWN_TIMEOUT:-30}"
+
+                  READY_WORD="ready"
+                  READY_NEEDED=2
+
+                  #the bar is redrawn after every log line, so the end of the file is the
+                  #only part worth reading, and it is nowhere near this big
+                  TAIL_BYTES=20000
+
+                  #whoever holds the keyboard end of the pty open has to outlive the whole
+                  #job, since the far end hangs up when the last writer closes
+                  HOLD_FOR=86400
+
+                  die()
+                  {
+                      printf 'borger_dev_harness: %s\n' "$*" >&2
+                      exit 1
+                  }
+
+                  read_pid()
+                  {
+                      local file="$1" pid=""
+
+                      if [ -r "$file" ]; then
+                          pid=$(cat "$file") || pid=""
+                      fi
+
+                      printf '%s' "$pid"
+                  }
+
+                  is_running()
+                  {
+                      local pid
+                      pid=$(read_pid "$PIDFILE")
+
+                      if [ -z "$pid" ]; then
+                          return 1
+                      fi
+
+                      kill -0 "$pid" 2>/dev/null
+                  }
+
+                  #the bar is drawn in colour and ends its lines with ESC D rather than a
+                  #newline, so the escapes come off before any of this reads as lines
+                  strip_escapes()
+                  {
+                      sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b.//g' \
+                          | tr '\r' '\n' \
+                          | grep -v '^[[:space:]]*$' \
+                          || true
+                  }
+
+                  bar()
+                  {
+                      local out
+                      out=$(tail -c "$TAIL_BYTES" "$LOG" 2>/dev/null | strip_escapes | tail -n 1) || out=""
+                      printf '%s' "$out"
+                  }
+
+                  #counted here rather than through grep so an empty bar is a count of zero
+                  #instead of a failed pipeline, which under pipefail would take the whole
+                  #script down with it on the first poll
+                  count_ready()
+                  {
+                      local rest="$1" n=0
+
+                      while [[ "$rest" == *"$READY_WORD"* ]]; do
+                          rest="${rest#*"$READY_WORD"}"
+                          n=$(( n + 1 ))
+                      done
+
+                      printf '%s' "$n"
+                  }
+
+                  dump_log()
+                  {
+                      echo "last of $LOG:"
+                      tail -c "$TAIL_BYTES" "$LOG" 2>/dev/null | strip_escapes | tail -n 40 || true
+                  }
+
+                  #ctrl+c down the pty, which is the shutdown borger dev and concurrently
+                  #are actually written against: the line discipline turns the byte into a
+                  #SIGINT aimed at everything in the foreground of that terminal, which a
+                  #kill at this end could not address
+                  stop()
+                  {
+                      local pid holder i
+
+                      pid=$(read_pid "$PIDFILE")
+                      holder=$(read_pid "$HOLDFILE")
+
+                      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                          printf '\003' > "$KEYS" 2>/dev/null || true
+
+                          for (( i = 0; i < DOWN_TIMEOUT * 5; i++ )); do
+                              if ! kill -0 "$pid" 2>/dev/null; then
+                                  break
+                              fi
+
+                              sleep 0.2
+                          done
+
+                          #only for a dev server that ignored its ctrl+c, so the state
+                          #directory isn't left pointing at something still running
+                          if kill -0 "$pid" 2>/dev/null; then
+                              echo "borger_dev_harness: no exit after ${DOWN_TIMEOUT}s, escalating" >&2
+                              kill -TERM "$pid" 2>/dev/null || true
+                              sleep 2
+                              kill -KILL "$pid" 2>/dev/null || true
+                          fi
+                      fi
+
+                      if [ -n "$holder" ]; then
+                          kill "$holder" 2>/dev/null || true
+                      fi
+
+                      rm -f "$KEYS" "$PIDFILE" "$HOLDFILE"
+                  }
+
+                  harness_up()
+                  {
+                      local deadline line n
+
+                      if is_running; then
+                          die "already up (pid $(read_pid "$PIDFILE"))"
+                      fi
+
+                      rm -rf "$STATE"
+                      mkdir -p "$STATE"
+                      mkfifo "$KEYS"
+
+                      #the fifo is the pty's keyboard and this is the finger resting on it.
+                      #both ends open in the background because opening either half of a
+                      #fifo blocks until the other one shows up
+                      sleep "$HOLD_FOR" > "$KEYS" &
+                      echo $! > "$HOLDFILE"
+
+                      #started right where it was called from, so the directory is the
+                      #caller's business and stays that way.
+                      #
+                      #every handle it was given belongs to this state directory and none
+                      #to the caller's terminal. a background child still holding the
+                      #step's stdout is a step that never finishes, and the point of this
+                      #is to still be here when the next one starts
+                      script -q -f -c "$DEV_CMD" "$LOG" < "$KEYS" > /dev/null 2>&1 &
+                      echo $! > "$PIDFILE"
+
+                      deadline=$(( SECONDS + UP_TIMEOUT ))
+
+                      while (( SECONDS < deadline )); do
+                          if ! is_running; then
+                              dump_log
+                              stop
+                              die "$DEV_CMD exited before it came up"
+                          fi
+
+                          line=$(bar)
+                          n=$(count_ready "$line")
+
+                          if (( n >= READY_NEEDED )); then
+                              echo "borger_dev_harness: up after $(( SECONDS ))s"
+                              echo "$line"
+                              return 0
+                          fi
+
+                          sleep 2
+                      done
+
+                      dump_log
+                      stop
+                      die "the status bar never showed $READY_NEEDED x $READY_WORD within ${UP_TIMEOUT}s"
+                  }
+
+                  harness_down()
+                  {
+                      if ! is_running; then
+                          die "not up, nothing to take down"
+                      fi
+
+                      stop
+                      echo "borger_dev_harness: down"
+                  }
+
+                  case "${1:-}" in
+                      up)
+                          harness_up
+                          ;;
+                      down)
+                          harness_down
+                          ;;
+                      *)
+                          die "usage: borger_dev_harness up | borger_dev_harness down"
+                          ;;
+                  esac
+                  borger_dev_harness
+                  chmod +x "$RUNNER_TEMP/bin/borger_dev_harness"
+                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+            - name: "New game: borger init"
+              run: |
+                  borger init lifecycle_test_new
+
+            - name: "New game: borger dev"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_new
+              run: |
+                  borger_dev_harness up
+
+            - name: "New game: borger clean"
+              working-directory: lifecycle_test_new
+              run: |
+                  borger_dev_harness down
+                  yes | borger clean
+
+            - name: "New game: delete"
+              run: |
+                  rm -rf lifecycle_test_new
+
+            - name: "Existing game: clone"
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 1
+                  path: lifecycle_test_existing
+
+            - name: "Existing game: borger install"
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger install
+
+            - name: "Existing game: borger dev"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness up
