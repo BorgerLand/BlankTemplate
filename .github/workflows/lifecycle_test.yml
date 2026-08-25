@@ -184,6 +184,11 @@ jobs:
                   const URL = 'https://localhost:5173';
                   const DONE = 'Load time:';
 
+                  //written synchronously because these are pipes under actions, where node
+                  //writes them asynchronously and the process.exit below lands before
+                  //whatever is still queued on one
+                  const say = (line, fd = 1) => require('fs').writeSync(fd, `${line}\n`);
+
                   //the client picks its transport off the user agent, so the descriptor is
                   //what puts the second chromium on websockets. firefox and webkit are not
                   //held to either transport
@@ -239,7 +244,7 @@ jobs:
                               page.on('console', msg =>
                               {
                                   const text = msg.text();
-                                  console.log(`[${label}] ${text}`);
+                                  say(`[${label}] ${text}`);
 
                                   for (const feature of Object.keys(expected))
                                   {
@@ -280,7 +285,7 @@ jobs:
                   //of waiting out the browsers that have not finished
                   Promise.all(Object.entries(BROWSERS).map(entry => run(...entry))).catch(err =>
                   {
-                      console.error(err);
+                      say(err.stack || err, 2);
                       process.exit(1);
                   });
                   browser_test
