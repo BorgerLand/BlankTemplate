@@ -407,7 +407,7 @@ jobs:
             - name: "Existing game: borger release"
               working-directory: lifecycle_test_existing
               run: |
-                  borger release
+                  borger release <<< "y"
 
             - name: "Browser harness: dev"
               timeout-minutes: 5
