@@ -5,7 +5,7 @@ on:
     pull_request:
 
 jobs:
-    test-install:
+    lifecycle-test:
         runs-on: ubuntu-latest
         steps:
             - name: Eat borger
@@ -41,11 +41,14 @@ jobs:
                   HOLDFILE="$STATE/holder"
 
                   DEV_CMD="${borger_dev_harness_CMD:-borger dev}"
-                  UP_TIMEOUT="${borger_dev_harness_TIMEOUT:-270}"
                   DOWN_TIMEOUT="${borger_dev_harness_DOWN_TIMEOUT:-30}"
 
                   READY_WORD="ready"
                   READY_NEEDED=2
+
+                  #the status bar, once its colours are off: the server field is the first
+                  #thing on it, and nothing else in the log begins that way
+                  BAR_LINE='^[[:space:]]*server:[[:space:]]'
 
                   #the bar is redrawn after every log line, so the end of the file is the
                   #only part worth reading, and it is nowhere near this big
@@ -116,10 +119,36 @@ jobs:
                       printf '%s' "$n"
                   }
 
-                  dump_log()
+                  #how much of the log has already been printed to the step output. the
+                  #whole file is not reprinted every poll, only the part that is new
+                  FORWARDED=0
+
+                  #everything borger dev has said since the last look, minus the status bar
+                  #itself, which is redrawn between every pair of log lines and would bury
+                  #the output it is sitting under. the bar is the one line that starts with
+                  #the server field, since concurrently prefixes its own with a name tag.
+                  #
+                  #a line still being written is printed as far as it got and the rest
+                  #follows on the next pass, which is not worth the offset bookkeeping to
+                  #avoid: this is here to be read while something is going wrong
+                  forward()
                   {
-                      echo "last of $LOG:"
-                      tail -c "$TAIL_BYTES" "$LOG" 2>/dev/null | strip_escapes | tail -n 40 || true
+                      local size
+
+                      size=$(wc -c < "$LOG" 2>/dev/null) || return 0
+                      size=$(( size ))
+
+                      if (( size <= FORWARDED )); then
+                          return 0
+                      fi
+
+                      tail -c "+$(( FORWARDED + 1 ))" "$LOG" 2>/dev/null \
+                          | head -c "$(( size - FORWARDED ))" \
+                          | strip_escapes \
+                          | grep -v "$BAR_LINE" \
+                          || true
+
+                      FORWARDED=$size
                   }
 
                   #ctrl+c down the pty, which is the shutdown borger dev and concurrently
@@ -163,7 +192,7 @@ jobs:
 
                   harness_up()
                   {
-                      local deadline line n
+                      local line="" n=0
 
                       if is_running; then
                           die "already up (pid $(read_pid "$PIDFILE"))"
@@ -189,12 +218,15 @@ jobs:
                       script -q -f -c "$DEV_CMD" "$LOG" < "$KEYS" > /dev/null 2>&1 &
                       echo $! > "$PIDFILE"
 
-                      deadline=$(( SECONDS + UP_TIMEOUT ))
+                      #no clock of its own: waiting forever is the caller's decision to
+                      #make, and the step that called this already carries a timeout. the
+                      #only way out other than ready is the dev server dying
+                      while true; do
+                          forward
 
-                      while (( SECONDS < deadline )); do
                           if ! is_running; then
-                              dump_log
                               stop
+                              forward
                               die "$DEV_CMD exited before it came up"
                           fi
 
@@ -209,10 +241,6 @@ jobs:
 
                           sleep 2
                       done
-
-                      dump_log
-                      stop
-                      die "the status bar never showed $READY_NEEDED x $READY_WORD within ${UP_TIMEOUT}s"
                   }
 
                   harness_down()
