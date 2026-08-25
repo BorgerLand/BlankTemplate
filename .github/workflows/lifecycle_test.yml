@@ -23,20 +23,18 @@ jobs:
 
             - name: Install borger dev harness
               run: |
-                  mkdir -p "$RUNNER_TEMP/bin"
-                  cat > "$RUNNER_TEMP/bin/borger_dev_harness" <<'borger_dev_harness'
+                  mkdir -p "$RUNNER_TEMP/harness"
+                  cat > "$RUNNER_TEMP/harness/borger_dev_harness" <<'borger_dev_harness'
                   #!/usr/bin/env bash
                   set -euo pipefail
 
-                  #  borger_dev_harness [dev args...] [-- command [args...]]
+                  #  borger_dev_harness [dev args...]
                   #
-                  #brings borger dev up, waits for its status bar to say ready twice, runs
-                  #the command against it and takes it back down. two readys is the server
-                  #and the client both up, and the bar is the only place that says so about
-                  #both at once. cli.sh only draws it on a terminal, so dev runs under a pty
-                  #and the bar is read back out of the typescript that pty writes
-
-                  DEV_CMD="${borger_dev_harness_CMD:-borger dev}"
+                  #brings borger dev up, waits for its status bar to say ready twice, points
+                  #every browser at the client at once and takes it back down. two readys is
+                  #the server and the client both up, and the bar is the only place that says
+                  #so about both at once. cli.sh only draws it on a terminal, so dev runs
+                  #under a pty and the bar is read back out of the typescript that pty writes
 
                   READY_WORD="ready"
                   READY_NEEDED=2
@@ -48,6 +46,9 @@ jobs:
                   #everything is
                   PTY_ROWS=50
                   PTY_COLS=200
+
+                  #playwright lives beside this script rather than in the game under test
+                  export NODE_PATH="$(dirname "$(readlink -f "$0")")/node_modules"
 
                   #declared up here because the trap can reach the teardown before any of
                   #them are filled in
@@ -140,16 +141,10 @@ jobs:
 
                   #script takes its command as one string for a shell of its own to read,
                   #so forwarded arguments are quoted back into it rather than passed as words
-                  CMD="$DEV_CMD"
+                  CMD="borger dev"
 
-                  while (( $# )); do
-                      if [ "$1" = "--" ]; then
-                          shift
-                          break
-                      fi
-
-                      CMD="$CMD $(printf '%q' "$1")"
-                      shift
+                  for arg in "$@"; do
+                      CMD="$CMD $(printf '%q' "$arg")"
                   done
 
                   #nothing is left behind on any way out of here: a dev server that outlives
@@ -196,104 +191,96 @@ jobs:
 
                   STATUS=0
 
-                  if (( $# )); then
-                      "$@" || STATUS=$?
-                  fi
-
-                  exit "$STATUS"
-                  borger_dev_harness
-                  chmod +x "$RUNNER_TEMP/bin/borger_dev_harness"
-                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-            - name: Install borger browser harness
-              run: |
-                  mkdir -p "$RUNNER_TEMP/client_test"
-                  cat > "$RUNNER_TEMP/client_test/borger_browser_harness" <<'client_test'
-                  #!/usr/bin/env node
+                  node - <<'browser_test' || STATUS=$?
                   'use strict';
 
-                  //  borger_browser_harness          load it as a desktop browser
-                  //  borger_browser_harness android  load it as an android phone
-                  //
-                  //loads the dev client in a real browser and waits for "Load time:", the
-                  //client's own console line at the end of startup. everything else in this
-                  //test proves the server; this is the only thing that says the page boots
+                  //loads the dev client in every browser at once and waits for "Load time:",
+                  //the client's own console line at the end of startup. everything else in
+                  //this test proves the server; this is the only thing that says the page
+                  //boots, and running them together makes it several players at once as well
 
-                  const { chromium, devices } = require('playwright');
+                  const playwright = require('playwright');
 
-                  const URL = process.env.CLIENT_URL || 'https://localhost:5173';
-                  const DONE = process.env.CLIENT_DONE || 'Load time:';
+                  const URL = 'https://localhost:5173';
+                  const DONE = 'Load time:';
 
-                  //a device descriptor keeps the user agent, viewport, pixel ratio and
-                  //touch flag agreeing with each other, which matters because whatever is
-                  //deciding this is mobile asks about them separately. pixel 5 is a
-                  //chromium descriptor, so it rides the browser already installed
-                  const PROFILES = {
-                      desktop: {},
-                      android: devices['Pixel 5'],
+                  //a device descriptor keeps the user agent, viewport, pixel ratio and touch
+                  //flag agreeing with each other, which matters because the client asks about
+                  //them separately: chromium on android is the combination that has to fall
+                  //back from webtransport to websockets. the descriptor also names the
+                  //browser it belongs to, so only the plain entries go by their own key
+                  const BROWSERS = {
+                      chromium: {},
+                      android: playwright.devices['Pixel 5'],
+                      firefox: {},
+                      webkit: {},
                   };
 
-                  const PROFILE = process.argv[2] || 'desktop';
-
-                  async function main()
+                  async function run(label, device)
                   {
-                      if (!(PROFILE in PROFILES)) {
-                          throw new Error(`unknown profile '${PROFILE}', expected one of: ${Object.keys(PROFILES).join(', ')}`);
-                      }
+                      const browser = await playwright[device.defaultBrowserType || label].launch();
 
-                      console.log(`profile: ${PROFILE}`);
+                      try {
+                          const context = await browser.newContext({
+                              ...device,
 
-                      const browser = await chromium.launch();
-                      const context = await browser.newContext({
-                          ...PROFILES[PROFILE],
-
-                          //the dev server signs its own certificate, and headless chromium
-                          //may not show an interstitial there is any way to click through
-                          ignoreHTTPSErrors: true,
-                      });
-                      const page = await context.newPage();
-
-                      //armed before the navigation, or a client that starts up faster
-                      //than this gets a listener attached would never be seen to finish
-                      const loaded = new Promise(resolve => {
-                          page.on('console', msg => {
-                              const text = msg.text();
-                              console.log(text);
-
-                              if (text.includes(DONE)) {
-                                  resolve();
-                              }
+                              //the dev server signs its own certificate, and a headless
+                              //browser has no interstitial there is any way to click through
+                              ignoreHTTPSErrors: true,
                           });
-                      });
+                          const page = await context.newPage();
 
-                      page.on('pageerror', err => console.log(`uncaught: ${err.message}`));
-                      page.on('requestfailed', req =>
-                          console.log(`Request failed: ${req.url()} ${req.failure().errorText}`));
+                          //armed before the navigation, or a client that starts up faster
+                          //than this gets a listener attached would never be seen to finish
+                          await new Promise((resolve, reject) => {
+                              const fail = why => reject(new Error(`[${label}] ${why}`));
 
-                      //commit rather than load: a wasm client keeps loading long after it
-                      //is up, and waiting on load would outlast the console line this is
-                      //here for. no clock either, the step has one
-                      await page.goto(URL, { waitUntil: 'commit', timeout: 0 });
-                      await loaded;
+                              page.on('console', msg => {
+                                  const text = msg.text();
+                                  console.log(`[${label}] ${text}`);
 
-                      await browser.close();
+                                  if (text.includes(DONE)) {
+                                      resolve();
+                                  }
+                              });
+
+                              //these two never reach the console handler above: playwright
+                              //hands them out as events of their own, and a client that
+                              //throws or cannot fetch something has not loaded
+                              page.on('pageerror', err => fail(`uncaught: ${err.message}`));
+                              page.on('requestfailed', req =>
+                                  fail(`request failed: ${req.url()} ${req.failure().errorText}`));
+
+                              //commit rather than load: a wasm client keeps loading long
+                              //after it is up, and waiting on load would outlast the console
+                              //line this is here for. no clock either, the step has one
+                              page.goto(URL, { waitUntil: 'commit', timeout: 0 }).catch(err => fail(err.message));
+                          });
+                      } finally {
+                          await browser.close();
+                      }
                   }
 
-                  main().catch(err => {
+                  //the first browser to fail takes the whole run down with it rather than
+                  //waiting on the others, which are about to lose their server anyway
+                  Promise.all(Object.entries(BROWSERS).map(entry => run(...entry))).catch(err => {
                       console.error(err);
                       process.exit(1);
                   });
-                  client_test
+                  browser_test
 
-                  cd "$RUNNER_TEMP/client_test"
-                  chmod +x borger_browser_harness
+                  exit "$STATUS"
+                  borger_dev_harness
+                  chmod +x "$RUNNER_TEMP/harness/borger_dev_harness"
+
+                  cd "$RUNNER_TEMP/harness"
                   npm init -y > /dev/null
 
-                  #skipped on the way in and then asked for by name, or npm fetches firefox
-                  #and webkit as well to leave them sitting unused
+                  #the postinstall download is skipped and the browsers are then asked for
+                  #by name, which is the only way to get the system libraries they need
                   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund playwright
-                  npx playwright install --with-deps chromium
-                  echo "$RUNNER_TEMP/client_test" >> "$GITHUB_PATH"
+                  npx playwright install --with-deps chromium firefox webkit
+                  echo "$RUNNER_TEMP/harness" >> "$GITHUB_PATH"
 
             - name: "New game: borger init"
               run: |
@@ -330,32 +317,26 @@ jobs:
               run: |
                   borger release <<< "y"
 
-            - name: "Browser harness: dev"
+            - name: "Existing game: borger dev"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
-                  borger_dev_harness -- borger_browser_harness
+                  borger_dev_harness
 
-            - name: "Browser harness: dev (Android/WebSocket fallback)"
+            - name: "Existing game: borger dev --session-replay"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
-                  borger_dev_harness -- borger_browser_harness android
+                  borger_dev_harness --session-replay
 
-            - name: "Browser harness: dev --session-replay"
+            - name: "Existing game: borger dev --singlethreaded"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
-                  borger_dev_harness --session-replay -- borger_browser_harness
+                  borger_dev_harness --singlethreaded
 
-            - name: "Browser harness: dev --singlethreaded"
+            - name: "Existing game: borger dev --session-replay --singlethreaded"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
-                  borger_dev_harness --singlethreaded -- borger_browser_harness
-
-            - name: "Browser harness: dev --session-replay --singlethreaded"
-              timeout-minutes: 5
-              working-directory: lifecycle_test_existing
-              run: |
-                  borger_dev_harness --session-replay --singlethreaded -- borger_browser_harness
+                  borger_dev_harness --session-replay --singlethreaded
