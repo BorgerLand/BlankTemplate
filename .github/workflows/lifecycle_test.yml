@@ -28,48 +28,29 @@ jobs:
                   #!/usr/bin/env bash
                   set -euo pipefail
 
-                  #runs a command against a borger dev server, and owns that server from
-                  #one end to the other: it is started here, waited for here, and taken
-                  #back down here before this returns. nothing outlives the step that
-                  #called it, so there is nothing for the next step to find or clean up.
-                  #
-                  #cli.sh only draws its status bar on a terminal and a runner hasn't got
-                  #one, so dev is run under a pty and the bar is read back out of the
-                  #typescript that pty writes. two readys on the last line is the server
-                  #and the client both up, which is the whole definition of started here:
-                  #the bar is the only place that says so about both halves at once.
-                  #
                   #  borger_dev_harness [dev args...] [-- command [args...]]
                   #
-                  #anything before the -- is passed on to borger dev, and the command after
-                  #it is run once the bar says ready twice. with no command this is just a
-                  #check that dev comes up at all, which is worth a step of its own
+                  #brings borger dev up, waits for its status bar to say ready twice, runs
+                  #the command against it and takes it back down. two readys is the server
+                  #and the client both up, and the bar is the only place that says so about
+                  #both at once. cli.sh only draws it on a terminal, so dev runs under a pty
+                  #and the bar is read back out of the typescript that pty writes
 
                   DEV_CMD="${borger_dev_harness_CMD:-borger dev}"
 
                   READY_WORD="ready"
                   READY_NEEDED=2
-
-                  #the status bar, once its colours are off: the server field is the first
-                  #thing on it, and nothing else in the log begins that way
                   BAR_LINE='^[[:space:]]*server:[[:space:]]'
-
-                  #the bar is redrawn after every log line, so the end of the file is the
-                  #only part worth reading, and it is nowhere near this big
                   TAIL_BYTES=20000
 
-                  #a freshly allocated pty is zero by zero until somebody says otherwise,
-                  #and script has no terminal of its own to copy a size from out here. the
-                  #bar asks the terminal how wide it is and trims itself to fit, so a width
-                  #of zero trims it away to nothing: a bar that is drawn, is empty, and
-                  #never says ready however ready everything is. wide enough for the whole
-                  #bar and then some, so nothing is lost off the end either
+                  #the bar trims itself to the terminal width and a fresh pty is zero by
+                  #zero: too narrow and it is drawn empty, never saying ready however ready
+                  #everything is
                   PTY_ROWS=50
                   PTY_COLS=200
 
-                  #the scratch directory holding the typescript and the pty's keyboard, and
-                  #the dev server reading from it. declared up here because the teardown
-                  #can be reached, through the trap, before any of them are filled in
+                  #declared up here because the trap can reach the teardown before any of
+                  #them are filled in
                   STATE=""
                   LOG=""
                   DEV_PID=""
@@ -86,12 +67,16 @@ jobs:
                   }
 
                   #the bar is drawn in colour and ends its lines with ESC D rather than a
-                  #newline, so the escapes come off before any of this reads as lines
+                  #newline, hence the carriage returns and the second expression. line
+                  #buffered because one end of this is a live stream: left alone both of
+                  #these sit on a block's worth of output
                   strip_escapes()
                   {
-                      sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b.//g' \
-                          | tr '\r' '\n' \
-                          | grep -v '^[[:space:]]*$' \
+                      stdbuf -oL tr '\r' '\n' \
+                          | sed -u \
+                              -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' \
+                              -e 's/\x1b.//g' \
+                              -e '/^[[:space:]]*$/d' \
                           || true
                   }
 
@@ -103,8 +88,7 @@ jobs:
                   }
 
                   #counted here rather than through grep so an empty bar is a count of zero
-                  #instead of a failed pipeline, which under pipefail would take the whole
-                  #script down with it on the first poll
+                  #instead of a failed pipeline, which pipefail would take the script down for
                   count_ready()
                   {
                       local rest="$1" n=0
@@ -117,43 +101,11 @@ jobs:
                       printf '%s' "$n"
                   }
 
-                  #how much of the log has already been printed to the step output. the
-                  #whole file is not reprinted every pass, only the part that is new
-                  FORWARDED=0
-
-                  #everything borger dev has said since the last look, minus the status bar
-                  #itself, which is redrawn between every pair of log lines and would bury
-                  #the output it is sitting under. the bar is the one line that starts with
-                  #the server field, since concurrently prefixes its own with a name tag.
-                  #
-                  #a line still being written is printed as far as it got and the rest
-                  #follows on the next pass, which is not worth the offset bookkeeping to
-                  #avoid: this is here to be read while something is going wrong
-                  forward()
+                  #the bar is dropped rather than printed: it is redrawn between every pair
+                  #of log lines and would bury the output it sits under
+                  log_stream()
                   {
-                      local size
-
-                      #tested before the redirect rather than after: a redirect from a
-                      #file that isn't there is the shell's complaint, not the command's,
-                      #and it is made before any 2>/dev/null on the line can catch it
-                      if [ -z "$LOG" ] || [ ! -r "$LOG" ]; then
-                          return 0
-                      fi
-
-                      size=$(wc -c < "$LOG")
-                      size=$(( size ))
-
-                      if (( size <= FORWARDED )); then
-                          return 0
-                      fi
-
-                      tail -c "+$(( FORWARDED + 1 ))" "$LOG" 2>/dev/null \
-                          | head -c "$(( size - FORWARDED ))" \
-                          | strip_escapes \
-                          | grep -v "$BAR_LINE" \
-                          || true
-
-                      FORWARDED=$size
+                      strip_escapes | grep --line-buffered -v "$BAR_LINE" || true
                   }
 
                   #ctrl+c down the pty, which is the shutdown borger dev and concurrently
@@ -166,36 +118,28 @@ jobs:
                           printf '\003' >&3 2>/dev/null || true
                       fi
 
-                      #it is a child of this shell, so waiting is how it is known to be
-                      #gone: no polling the process table, and no window where it has
-                      #exited but has not been reaped yet
                       if [ -n "$DEV_PID" ]; then
                           wait "$DEV_PID" 2>/dev/null || true
                           DEV_PID=""
                       fi
                   }
 
-                  #every way out of here goes through this, so the dev server cannot be
-                  #left behind for the next step to trip over: not a failed command, not a
-                  #dev server that never came up, not the runner cancelling the job
                   cleanup()
                   {
                       stop
 
-                      #after the wait in stop rather than before it, so what is printed is
-                      #the whole rest of the log: a dev server on its way out has things to
-                      #say about going, and the last of them are written between the ctrl+c
-                      #and the process leaving the table
-                      forward
+                      #the log stream ends on its own once nothing is writing to the pipe.
+                      #waited for rather than killed, so its last lines land before this
+                      #script's exit does
+                      wait 2>/dev/null || true
 
                       if [ -n "$STATE" ]; then
                           rm -rf "$STATE"
                       fi
                   }
 
-                  #the command is built as one string because that is how script takes it,
-                  #for a shell of its own to read. an argument forwarded from the caller is
-                  #quoted back into that string rather than handed over as a word
+                  #script takes its command as one string for a shell of its own to read,
+                  #so forwarded arguments are quoted back into it rather than passed as words
                   CMD="$DEV_CMD"
 
                   while (( $# )); do
@@ -208,45 +152,38 @@ jobs:
                       shift
                   done
 
+                  #nothing is left behind on any way out of here: a dev server that outlives
+                  #its step holds port 5173 and answers the next step's pgrep, which reads
+                  #as a bar that went green before anything was built
                   trap cleanup EXIT
                   trap 'exit 130' INT TERM HUP
 
                   STATE=$(mktemp -d)
                   LOG="$STATE/dev.log"
                   KEYS="$STATE/keys"
+                  OUT="$STATE/out"
 
-                  #the fifo is the pty's keyboard and this fd is the finger resting on it.
-                  #held open for reading as well as writing so the open cannot block on a
-                  #reader turning up, and so the far end never sees the keyboard hang up,
-                  #which is what the last writer closing looks like from there
-                  mkfifo "$KEYS"
+                  mkfifo "$KEYS" "$OUT"
+
+                  #the pty's keyboard, held open for reading as well as writing so the open
+                  #cannot block and the far end never sees the keyboard hang up, which is
+                  #what the last writer closing looks like from there
                   exec 3<> "$KEYS"
 
-                  #the log is made before anything can look for it, so the first pass reads
-                  #an empty file rather than a missing one
                   : > "$LOG"
 
-                  #started right where it was called from, so the directory is the caller's
-                  #business and stays that way. the stty runs inside the pty, which is the
-                  #only place from which its size can be set.
-                  #
-                  #its output goes nowhere: everything worth reading is in the typescript
-                  #already, and forward is what decides when any of it is printed
+                  #backgrounded because opening either half of a fifo waits for the other,
+                  #and these two meet in the middle
+                  log_stream < "$OUT" &
+
+                  #the stty runs inside the pty, the only place its size can be set from
                   script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $CMD" "$LOG" \
-                      < "$KEYS" > /dev/null 2>&1 &
+                      < "$KEYS" > "$OUT" 2>&1 &
                   DEV_PID=$!
 
-                  #no clock of its own: waiting forever is the caller's decision to make,
-                  #and the step that called this already carries a timeout. the only way out
-                  #other than ready is the dev server dying
+                  #no clock of its own: the step that called this already carries a timeout
                   while true; do
-                      forward
-
-                      #the last of what it said on its way out comes before the complaint
-                      #about it, since that is the half that says why
                       if ! is_running; then
-                          stop
-                          forward
                           die "$CMD exited before it came up"
                       fi
 
@@ -257,9 +194,6 @@ jobs:
                       sleep 2
                   done
 
-                  #whatever was asked for, now that there is something to ask it of. its
-                  #status is this script's status, and the dev server comes down on the way
-                  #out either way
                   STATUS=0
 
                   if (( $# )); then
@@ -278,33 +212,22 @@ jobs:
                   #!/usr/bin/env node
                   'use strict';
 
-                  //loads the dev client in a real browser and waits for it to say it
-                  //finished starting up. everything else in this test proves the server:
-                  //that it built, that it is in the process table, that the bar went
-                  //green. none of that says the thing vite serves actually boots, and the
-                  //only place that answer exists is inside the page.
-                  //
-                  //"Load time:" is the client's own console line at the end of startup,
-                  //so that line arriving is the whole test
-                  //
                   //  borger_browser_harness          load it as a desktop browser
                   //  borger_browser_harness android  load it as an android phone
+                  //
+                  //loads the dev client in a real browser and waits for "Load time:", the
+                  //client's own console line at the end of startup. everything else in this
+                  //test proves the server; this is the only thing that says the page boots
 
                   const { chromium, devices } = require('playwright');
 
                   const URL = process.env.CLIENT_URL || 'https://localhost:5173';
                   const DONE = process.env.CLIENT_DONE || 'Load time:';
 
-                  //a phone is not one setting but a set of them that have to agree: the
-                  //user agent, the viewport, the pixel ratio and whether there is a touch
-                  //screen are all asked about separately by whatever is deciding this is
-                  //mobile, and a client that reads two of them and is told different
-                  //stories is a client under a machine that exists nowhere. playwright
-                  //keeps them together per device, so the device is what is named here
-                  //rather than the settings
-                  //
-                  //pixel 5 is a chromium descriptor, so it rides the browser already
-                  //installed for the desktop run
+                  //a device descriptor keeps the user agent, viewport, pixel ratio and
+                  //touch flag agreeing with each other, which matters because whatever is
+                  //deciding this is mobile asks about them separately. pixel 5 is a
+                  //chromium descriptor, so it rides the browser already installed
                   const PROFILES = {
                       desktop: {},
                       android: devices['Pixel 5'],
@@ -320,12 +243,12 @@ jobs:
 
                       console.log(`profile: ${PROFILE}`);
 
-                      //the dev server signs its own certificate. told to the context, the
-                      //browser accepts it outright, which is steadier than driving the
-                      //interstitial: headless chromium may not show one to click
                       const browser = await chromium.launch();
                       const context = await browser.newContext({
                           ...PROFILES[PROFILE],
+
+                          //the dev server signs its own certificate, and headless chromium
+                          //may not show an interstitial there is any way to click through
                           ignoreHTTPSErrors: true,
                       });
                       const page = await context.newPage();
@@ -343,15 +266,13 @@ jobs:
                           });
                       });
 
-                      //a client that dies on the way up says so here rather than going
-                      //quiet until the step runs out of time
                       page.on('pageerror', err => console.log(`uncaught: ${err.message}`));
                       page.on('requestfailed', req =>
                           console.log(`Request failed: ${req.url()} ${req.failure().errorText}`));
 
-                      //commit rather than load: a wasm client is entitled to keep loading
-                      //long after it is up, and waiting on load would outlast the console
-                      //line this is actually here for. no clock either, the step has one
+                      //commit rather than load: a wasm client keeps loading long after it
+                      //is up, and waiting on load would outlast the console line this is
+                      //here for. no clock either, the step has one
                       await page.goto(URL, { waitUntil: 'commit', timeout: 0 });
                       await loaded;
 
@@ -368,8 +289,8 @@ jobs:
                   chmod +x borger_browser_harness
                   npm init -y > /dev/null
 
-                  #the browsers are skipped on the way in and then asked for by name, or
-                  #npm fetches firefox and webkit as well to leave them sitting unused
+                  #skipped on the way in and then asked for by name, or npm fetches firefox
+                  #and webkit as well to leave them sitting unused
                   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund playwright
                   npx playwright install --with-deps chromium
                   echo "$RUNNER_TEMP/client_test" >> "$GITHUB_PATH"
