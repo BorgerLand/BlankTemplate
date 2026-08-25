@@ -191,7 +191,10 @@ jobs:
 
                   STATUS=0
 
-                  node - <<'browser_test' || STATUS=$?
+                  #a file rather than node's stdin: a script read from stdin is evaluated in
+                  #the global scope, where a top level const shadows the global of the same
+                  #name for every module in the process, playwright's own included
+                  cat > "$STATE/browser_test.js" <<'browser_test'
                   'use strict';
 
                   //loads the dev client in every browser at once and waits for "Load time:",
@@ -268,6 +271,8 @@ jobs:
                       process.exit(1);
                   });
                   browser_test
+
+                  node "$STATE/browser_test.js" || STATUS=$?
 
                   exit "$STATUS"
                   borger_dev_harness
