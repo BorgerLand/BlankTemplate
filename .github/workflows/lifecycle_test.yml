@@ -315,7 +315,7 @@ jobs:
                   rm -rf lifecycle_test_new
 
             - name: "Existing game: clone"
-              uses: actions/checkout@v4
+              uses: actions/checkout@v7
               with:
                   fetch-depth: 1
                   path: lifecycle_test_existing
@@ -347,3 +347,15 @@ jobs:
               working-directory: lifecycle_test_existing
               run: |
                   borger_dev_harness --session-replay -- borger_browser_harness
+
+            - name: "Browser harness: dev --singlethreaded"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness --singlethreaded -- borger_browser_harness
+
+            - name: "Browser harness: dev --session-replay --singlethreaded"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness --session-replay --singlethreaded -- borger_browser_harness

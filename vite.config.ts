@@ -4,6 +4,14 @@ import basicSsl from "@vitejs/plugin-basic-ssl";
 import tsconfig from "./tsconfig.presentation.json" with { type: "json" };
 import checker from "vite-plugin-checker";
 
+const MULTITHREADING_HEADERS =
+	process.env.BORGER_SINGLETHREADED === "1"
+		? {}
+		: {
+				"Cross-Origin-Opener-Policy": "same-origin",
+				"Cross-Origin-Embedder-Policy": "require-corp",
+			};
+
 //https://vite.dev/config/
 export default defineConfig({
 	publicDir: "assets",
@@ -21,8 +29,7 @@ export default defineConfig({
 			ignored: (p) => p.startsWith(path.resolve("target") + path.sep),
 		},
 		headers: {
-			"Cross-Origin-Opener-Policy": "same-origin",
-			"Cross-Origin-Embedder-Policy": "require-corp",
+			...MULTITHREADING_HEADERS,
 			"Cache-Control": "no-store, no-cache, must-revalidate",
 			Pragma: "no-cache",
 			Expires: "0",
