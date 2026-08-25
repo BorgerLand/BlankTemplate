@@ -4,6 +4,10 @@ on:
     workflow_dispatch:
     pull_request:
 
+concurrency:
+    group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+    cancel-in-progress: true
+
 jobs:
     lifecycle-test:
         runs-on: ubuntu-latest
@@ -57,6 +61,15 @@ jobs:
                   #whoever holds the keyboard end of the pty open has to outlive the whole
                   #job, since the far end hangs up when the last writer closes
                   HOLD_FOR=86400
+
+                  #a freshly allocated pty is zero by zero until somebody says otherwise,
+                  #and script has no terminal of its own to copy a size from out here. the
+                  #bar asks the terminal how wide it is and trims itself to fit, so a width
+                  #of zero trims it away to nothing: a bar that is drawn, is empty, and
+                  #never says ready however ready everything is. wide enough for the whole
+                  #bar and then some, so nothing is lost off the end either
+                  PTY_ROWS=50
+                  PTY_COLS=200
 
                   die()
                   {
@@ -135,7 +148,14 @@ jobs:
                   {
                       local size
 
-                      size=$(wc -c < "$LOG" 2>/dev/null) || return 0
+                      #tested before the redirect rather than after: a redirect from a
+                      #file that isn't there is the shell's complaint, not the command's,
+                      #and it is made before any 2>/dev/null on the line can catch it
+                      if [ ! -r "$LOG" ]; then
+                          return 0
+                      fi
+
+                      size=$(wc -c < "$LOG")
                       size=$(( size ))
 
                       if (( size <= FORWARDED )); then
@@ -192,7 +212,7 @@ jobs:
 
                   harness_up()
                   {
-                      local line="" n=0
+                      local line="" was="" n=0
 
                       if is_running; then
                           die "already up (pid $(read_pid "$PIDFILE"))"
@@ -208,14 +228,20 @@ jobs:
                       sleep "$HOLD_FOR" > "$KEYS" &
                       echo $! > "$HOLDFILE"
 
+                      #the log is made before anything can look for it, so the first poll
+                      #reads an empty file rather than a missing one
+                      : > "$LOG"
+
                       #started right where it was called from, so the directory is the
-                      #caller's business and stays that way.
+                      #caller's business and stays that way. the stty runs inside the pty,
+                      #which is the only place from which its size can be set.
                       #
                       #every handle it was given belongs to this state directory and none
                       #to the caller's terminal. a background child still holding the
                       #step's stdout is a step that never finishes, and the point of this
                       #is to still be here when the next one starts
-                      script -q -f -c "$DEV_CMD" "$LOG" < "$KEYS" > /dev/null 2>&1 &
+                      script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $DEV_CMD" "$LOG" \
+                          < "$KEYS" > /dev/null 2>&1 &
                       echo $! > "$PIDFILE"
 
                       #no clock of its own: waiting forever is the caller's decision to
@@ -231,6 +257,16 @@ jobs:
                           fi
 
                           line=$(bar)
+
+                          #the bar is kept out of the forwarded log because it is redrawn
+                          #between every pair of lines, but each state it settles into is
+                          #worth one line: it is the thing being waited on, and a wait that
+                          #never ends should say what it was looking at
+                          if [ -n "$line" ] && [ "$line" != "$was" ]; then
+                              was="$line"
+                              echo "borger_dev_harness: bar:$line"
+                          fi
+
                           n=$(count_ready "$line")
 
                           if (( n >= READY_NEEDED )); then
