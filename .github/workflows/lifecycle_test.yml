@@ -8,6 +8,10 @@ concurrency:
     group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
     cancel-in-progress: true
 
+defaults:
+    run:
+        shell: bash
+
 jobs:
     lifecycle-test:
         runs-on: ubuntu-latest
@@ -45,7 +49,6 @@ jobs:
                   HOLDFILE="$STATE/holder"
 
                   DEV_CMD="${borger_dev_harness_CMD:-borger dev}"
-                  DOWN_TIMEOUT="${borger_dev_harness_DOWN_TIMEOUT:-30}"
 
                   READY_WORD="ready"
                   READY_NEEDED=2
@@ -177,7 +180,7 @@ jobs:
                   #kill at this end could not address
                   stop()
                   {
-                      local pid holder i
+                      local pid holder
 
                       pid=$(read_pid "$PIDFILE")
                       holder=$(read_pid "$HOLDFILE")
@@ -185,22 +188,9 @@ jobs:
                       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
                           printf '\003' > "$KEYS" 2>/dev/null || true
 
-                          for (( i = 0; i < DOWN_TIMEOUT * 5; i++ )); do
-                              if ! kill -0 "$pid" 2>/dev/null; then
-                                  break
-                              fi
-
+                          while kill -0 "$pid" 2>/dev/null; do
                               sleep 0.2
                           done
-
-                          #only for a dev server that ignored its ctrl+c, so the state
-                          #directory isn't left pointing at something still running
-                          if kill -0 "$pid" 2>/dev/null; then
-                              echo "borger_dev_harness: no exit after ${DOWN_TIMEOUT}s, escalating" >&2
-                              kill -TERM "$pid" 2>/dev/null || true
-                              sleep 2
-                              kill -KILL "$pid" 2>/dev/null || true
-                          fi
                       fi
 
                       if [ -n "$holder" ]; then
@@ -212,7 +202,7 @@ jobs:
 
                   harness_up()
                   {
-                      local line="" was="" n=0
+                      local line="" n=0
 
                       if is_running; then
                           die "already up (pid $(read_pid "$PIDFILE"))"
@@ -257,21 +247,9 @@ jobs:
                           fi
 
                           line=$(bar)
-
-                          #the bar is kept out of the forwarded log because it is redrawn
-                          #between every pair of lines, but each state it settles into is
-                          #worth one line: it is the thing being waited on, and a wait that
-                          #never ends should say what it was looking at
-                          if [ -n "$line" ] && [ "$line" != "$was" ]; then
-                              was="$line"
-                              echo "borger_dev_harness: bar:$line"
-                          fi
-
                           n=$(count_ready "$line")
 
                           if (( n >= READY_NEEDED )); then
-                              echo "borger_dev_harness: up after $(( SECONDS ))s"
-                              echo "$line"
                               return 0
                           fi
 
@@ -286,7 +264,6 @@ jobs:
                       fi
 
                       stop
-                      echo "borger_dev_harness: down"
                   }
 
                   case "${1:-}" in
@@ -313,12 +290,12 @@ jobs:
               working-directory: lifecycle_test_new
               run: |
                   borger_dev_harness up
+                  borger_dev_harness down
 
             - name: "New game: borger clean"
               working-directory: lifecycle_test_new
               run: |
-                  borger_dev_harness down
-                  yes | borger clean
+                  borger clean <<< "y"
 
             - name: "New game: delete"
               run: |
