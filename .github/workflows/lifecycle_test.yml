@@ -28,14 +28,6 @@ jobs:
                   #!/usr/bin/env bash
                   set -euo pipefail
 
-                  #  borger_dev_harness [dev args...]
-                  #
-                  #brings borger dev up, waits for its status bar to say ready twice, points
-                  #every browser at the client at once and takes it back down. two readys is
-                  #the server and the client both up, and the bar is the only place that says
-                  #so about both at once. cli.sh only draws it on a terminal, so dev runs
-                  #under a pty and the bar is read back out of the typescript that pty writes
-
                   READY_WORD="ready"
                   READY_NEEDED=2
                   BAR_LINE='^[[:space:]]*server:[[:space:]]'
@@ -47,11 +39,10 @@ jobs:
                   PTY_ROWS=50
                   PTY_COLS=200
 
-                  #playwright lives beside this script rather than in the game under test
+                  #playwright is installed beside this script, not in the game under test
                   export NODE_PATH="$(dirname "$(readlink -f "$0")")/node_modules"
 
-                  #declared up here because the trap can reach the teardown before any of
-                  #them are filled in
+                  #the trap can reach the teardown before any of these are filled in
                   STATE=""
                   LOG=""
                   DEV_PID=""
@@ -69,8 +60,7 @@ jobs:
 
                   #the bar is drawn in colour and ends its lines with ESC D rather than a
                   #newline, hence the carriage returns and the second expression. line
-                  #buffered because one end of this is a live stream: left alone both of
-                  #these sit on a block's worth of output
+                  #buffered because one end of this is a live stream
                   strip_escapes()
                   {
                       stdbuf -oL tr '\r' '\n' \
@@ -102,17 +92,15 @@ jobs:
                       printf '%s' "$n"
                   }
 
-                  #the bar is dropped rather than printed: it is redrawn between every pair
-                  #of log lines and would bury the output it sits under
                   log_stream()
                   {
                       strip_escapes | grep --line-buffered -v "$BAR_LINE" || true
                   }
 
-                  #ctrl+c down the pty, which is the shutdown borger dev and concurrently
-                  #are actually written against: the line discipline turns the byte into a
-                  #SIGINT aimed at everything in the foreground of that terminal, which a
-                  #kill at this end could not address
+                  #ctrl+c into the pty rather than a kill from here: the line discipline
+                  #turns the byte into a SIGINT aimed at everything in that terminal's
+                  #foreground, which is the shutdown borger dev and concurrently are written
+                  #against
                   stop()
                   {
                       if is_running; then
@@ -128,10 +116,6 @@ jobs:
                   cleanup()
                   {
                       stop
-
-                      #the log stream ends on its own once nothing is writing to the pipe.
-                      #waited for rather than killed, so its last lines land before this
-                      #script's exit does
                       wait 2>/dev/null || true
 
                       if [ -n "$STATE" ]; then
@@ -139,17 +123,16 @@ jobs:
                       fi
                   }
 
-                  #script takes its command as one string for a shell of its own to read,
-                  #so forwarded arguments are quoted back into it rather than passed as words
+                  #script runs its command through a shell of its own, so arguments are
+                  #quoted back into the string rather than passed as words
                   CMD="borger dev"
 
                   for arg in "$@"; do
                       CMD="$CMD $(printf '%q' "$arg")"
                   done
 
-                  #nothing is left behind on any way out of here: a dev server that outlives
-                  #its step holds port 5173 and answers the next step's pgrep, which reads
-                  #as a bar that went green before anything was built
+                  #a dev server that outlives its step holds port 5173 and answers the next
+                  #step, which reads as a bar that went green before anything was built
                   trap cleanup EXIT
                   trap 'exit 130' INT TERM HUP
 
@@ -160,9 +143,9 @@ jobs:
 
                   mkfifo "$KEYS" "$OUT"
 
-                  #the pty's keyboard, held open for reading as well as writing so the open
-                  #cannot block and the far end never sees the keyboard hang up, which is
-                  #what the last writer closing looks like from there
+                  #held open for reading as well as writing so the open cannot block and the
+                  #far end never sees the keyboard hang up, which is what the last writer
+                  #closing looks like from there
                   exec 3<> "$KEYS"
 
                   : > "$LOG"
@@ -171,12 +154,11 @@ jobs:
                   #and these two meet in the middle
                   log_stream < "$OUT" &
 
-                  #the stty runs inside the pty, the only place its size can be set from
+                  #the bar is only drawn on a terminal, and only sized from inside one
                   script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $CMD" "$LOG" \
                       < "$KEYS" > "$OUT" 2>&1 &
                   DEV_PID=$!
 
-                  #no clock of its own: the step that called this already carries a timeout
                   while true; do
                       if ! is_running; then
                           die "$CMD exited before it came up"
@@ -197,35 +179,51 @@ jobs:
                   cat > "$STATE/browser_test.js" <<'browser_test'
                   'use strict';
 
-                  //loads the dev client in every browser at once and waits for "Load time:",
-                  //the client's own console line at the end of startup. everything else in
-                  //this test proves the server; this is the only thing that says the page
-                  //boots, and running them together makes it several players at once as well
-
                   const playwright = require('playwright');
 
                   const URL = 'https://localhost:5173';
                   const DONE = 'Load time:';
 
-                  //a device descriptor keeps the user agent, viewport, pixel ratio and touch
-                  //flag agreeing with each other, which matters because the client asks about
-                  //them separately: chromium on android is the combination that has to fall
-                  //back from webtransport to websockets. the descriptor also names the
-                  //browser it belongs to, so only the plain entries go by their own key
-                  const BROWSERS = {
-                      chromium: {},
-                      android: playwright.devices['Pixel 5'],
-                      firefox: {},
-                      webkit: {},
+                  //the client picks its transport off the user agent, so the descriptor is
+                  //what puts the second chromium on websockets. firefox and webkit are not
+                  //held to either transport
+                  const BROWSERS =
+                  {
+                      'chromium-desktop': { browser: 'chromium', webTransport: true },
+                      'chromium-android': { browser: 'chromium', device: playwright.devices['Pixel 5'], webTransport: false },
+                      firefox: { browser: 'firefox' },
+                      webkit: { browser: 'webkit' },
                   };
 
-                  async function run(label, device)
-                  {
-                      const browser = await playwright[device.defaultBrowserType || label].launch();
+                  //the dev server sends the cross origin isolation headers that shared
+                  //memory needs only when it is not in singlethreaded mode, so the flag dev
+                  //got decides this
+                  const SHARED_ARRAY_BUFFER = !process.argv.includes('--singlethreaded');
 
-                      try {
+                  //chromium and webkit leave the format string in the message with the
+                  //styles trailing, firefox substitutes them out and pads the colon with
+                  //spaces
+                  function compat(text, feature)
+                  {
+                      const found = new RegExp(`${feature}\\s*:\\s*(true|false)`).exec(text.replaceAll('%c', ''));
+
+                      return found && found[1] === 'true';
+                  }
+
+                  async function run(label, profile)
+                  {
+                      const browser = await playwright[profile.browser].launch();
+                      const expected = { SharedArrayBuffer: SHARED_ARRAY_BUFFER };
+                      const said = {};
+
+                      if ('webTransport' in profile) {
+                          expected.WebTransport = profile.webTransport;
+                      }
+
+                      try
+                      {
                           const context = await browser.newContext({
-                              ...device,
+                              ...profile.device,
 
                               //the dev server signs its own certificate, and a headless
                               //browser has no interstitial there is any way to click through
@@ -238,18 +236,30 @@ jobs:
                           await new Promise((resolve, reject) => {
                               const fail = why => reject(new Error(`[${label}] ${why}`));
 
-                              page.on('console', msg => {
+                              page.on('console', msg =>
+                              {
                                   const text = msg.text();
                                   console.log(`[${label}] ${text}`);
 
-                                  if (text.includes(DONE)) {
-                                      resolve();
+                                  for (const feature of Object.keys(expected))
+                                  {
+                                      const answer = compat(text, feature);
+                                      if (answer !== null) said[feature] = answer;
                                   }
+
+                                  if (!text.includes(DONE)) return;
+
+                                  //compared here rather than as the lines arrive so a client
+                                  //that never logs one at all is a failure too
+                                  for (const [feature, want] of Object.entries(expected))
+                                      if (said[feature] !== want)
+                                          return fail(`${feature} was ${said[feature] ?? 'never logged'}, expected ${want}`);
+
+                                  resolve();
                               });
 
-                              //these two never reach the console handler above: playwright
-                              //hands them out as events of their own, and a client that
-                              //throws or cannot fetch something has not loaded
+                              //neither of these reaches the console handler above:
+                              //playwright hands them out as events of their own
                               page.on('pageerror', err => fail(`uncaught: ${err.message}`));
                               page.on('requestfailed', req =>
                                   fail(`request failed: ${req.url()} ${req.failure().errorText}`));
@@ -259,20 +269,23 @@ jobs:
                               //line this is here for. no clock either, the step has one
                               page.goto(URL, { waitUntil: 'commit', timeout: 0 }).catch(err => fail(err.message));
                           });
-                      } finally {
+                      }
+                      finally
+                      {
                           await browser.close();
                       }
                   }
 
-                  //the first browser to fail takes the whole run down with it rather than
-                  //waiting on the others, which are about to lose their server anyway
-                  Promise.all(Object.entries(BROWSERS).map(entry => run(...entry))).catch(err => {
+                  //exited rather than left to reject: the first failure ends the run instead
+                  //of waiting out the browsers that have not finished
+                  Promise.all(Object.entries(BROWSERS).map(entry => run(...entry))).catch(err =>
+                  {
                       console.error(err);
                       process.exit(1);
                   });
                   browser_test
 
-                  node "$STATE/browser_test.js" || STATUS=$?
+                  node "$STATE/browser_test.js" "$@" || STATUS=$?
 
                   exit "$STATUS"
                   borger_dev_harness
