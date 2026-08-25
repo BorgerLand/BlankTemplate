@@ -281,6 +281,80 @@ jobs:
                   chmod +x "$RUNNER_TEMP/bin/borger_dev_harness"
                   echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+            - name: Install borger browser harness
+              run: |
+                  mkdir -p "$RUNNER_TEMP/client_test"
+                  cat > "$RUNNER_TEMP/client_test/borger_browser_harness" <<'client_test'
+                  #!/usr/bin/env node
+                  'use strict';
+
+                  //loads the dev client in a real browser and waits for it to say it
+                  //finished starting up. everything else in this test proves the server:
+                  //that it built, that it is in the process table, that the bar went
+                  //green. none of that says the thing vite serves actually boots, and the
+                  //only place that answer exists is inside the page.
+                  //
+                  //"Load time:" is the client's own console line at the end of startup,
+                  //so that line arriving is the whole test
+
+                  const { chromium } = require('playwright');
+
+                  const URL = process.env.CLIENT_URL || 'https://localhost:5173';
+                  const DONE = process.env.CLIENT_DONE || 'Load time:';
+
+                  async function main()
+                  {
+                      //the dev server signs its own certificate. told to the context, the
+                      //browser accepts it outright, which is steadier than driving the
+                      //interstitial: headless chromium may not show one to click
+                      const browser = await chromium.launch();
+                      const context = await browser.newContext({ ignoreHTTPSErrors: true });
+                      const page = await context.newPage();
+
+                      //armed before the navigation, or a client that starts up faster
+                      //than this gets a listener attached would never be seen to finish
+                      const loaded = new Promise(resolve => {
+                          page.on('console', msg => {
+                              const text = msg.text();
+                              console.log(text);
+
+                              if (text.includes(DONE)) {
+                                  resolve();
+                              }
+                          });
+                      });
+
+                      //a client that dies on the way up says so here rather than going
+                      //quiet until the step runs out of time
+                      page.on('pageerror', err => console.log(`uncaught: ${err.message}`));
+                      page.on('requestfailed', req =>
+                          console.log(`Request failed: ${req.url()} ${req.failure().errorText}`));
+
+                      //commit rather than load: a wasm client is entitled to keep loading
+                      //long after it is up, and waiting on load would outlast the console
+                      //line this is actually here for. no clock either, the step has one
+                      await page.goto(URL, { waitUntil: 'commit', timeout: 0 });
+                      await loaded;
+
+                      await browser.close();
+                  }
+
+                  main().catch(err => {
+                      console.error(err);
+                      process.exit(1);
+                  });
+                  client_test
+
+                  cd "$RUNNER_TEMP/client_test"
+                  chmod +x borger_browser_harness
+                  npm init -y > /dev/null
+
+                  #the browsers are skipped on the way in and then asked for by name, or
+                  #npm fetches firefox and webkit as well to leave them sitting unused
+                  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund playwright
+                  npx playwright install --with-deps chromium
+                  echo "$RUNNER_TEMP/client_test" >> "$GITHUB_PATH"
+
             - name: "New game: borger init"
               run: |
                   borger init lifecycle_test_new
@@ -312,8 +386,10 @@ jobs:
               run: |
                   borger install
 
-            - name: "Existing game: borger dev"
+            - name: "Browser harness: default options"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
                   borger_dev_harness up
+                  borger_browser_harness
+                  borger_dev_harness down
