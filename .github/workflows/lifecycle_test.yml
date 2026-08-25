@@ -39,14 +39,18 @@ jobs:
                   #and the client both up, which is the whole definition of started here:
                   #the bar is the only place that says so about both halves at once.
                   #
-                  #  borger_dev_harness up    start it here, return once the bar says ready twice
-                  #  borger_dev_harness down  ctrl+c it, or fail if it isn't up
+                  #  borger_dev_harness up [args...]  start it here, return once the bar
+                  #                                   says ready twice. anything after up
+                  #                                   is passed on to borger dev
+                  #  borger_dev_harness down          ctrl+c it and print whatever it said
+                  #                                   after it came up, or fail if it isn't up
 
                   STATE="${borger_dev_harness_STATE:-${RUNNER_TEMP:-/tmp}/borger_dev_harness}"
                   LOG="$STATE/dev.log"
                   KEYS="$STATE/keys"
                   PIDFILE="$STATE/pid"
                   HOLDFILE="$STATE/holder"
+                  SEENFILE="$STATE/forwarded"
 
                   DEV_CMD="${borger_dev_harness_CMD:-borger dev}"
 
@@ -137,7 +141,22 @@ jobs:
 
                   #how much of the log has already been printed to the step output. the
                   #whole file is not reprinted every poll, only the part that is new
-                  FORWARDED=0
+                  #
+                  #kept in the state directory rather than in a variable because up and
+                  #down are two runs of this script and the part down is here to print is
+                  #exactly the part up never saw: everything the dev server said between
+                  #the bar going green and the ctrl+c, which had not been written yet when
+                  #the step that started it returned
+                  seen()
+                  {
+                      local n=""
+
+                      if [ -r "$SEENFILE" ]; then
+                          n=$(cat "$SEENFILE") || n=""
+                      fi
+
+                      printf '%s' "$(( n + 0 ))"
+                  }
 
                   #everything borger dev has said since the last look, minus the status bar
                   #itself, which is redrawn between every pair of log lines and would bury
@@ -149,7 +168,7 @@ jobs:
                   #avoid: this is here to be read while something is going wrong
                   forward()
                   {
-                      local size
+                      local size from
 
                       #tested before the redirect rather than after: a redirect from a
                       #file that isn't there is the shell's complaint, not the command's,
@@ -158,20 +177,22 @@ jobs:
                           return 0
                       fi
 
+                      from=$(seen)
+
                       size=$(wc -c < "$LOG")
                       size=$(( size ))
 
-                      if (( size <= FORWARDED )); then
+                      if (( size <= from )); then
                           return 0
                       fi
 
-                      tail -c "+$(( FORWARDED + 1 ))" "$LOG" 2>/dev/null \
-                          | head -c "$(( size - FORWARDED ))" \
+                      tail -c "+$(( from + 1 ))" "$LOG" 2>/dev/null \
+                          | head -c "$(( size - from ))" \
                           | strip_escapes \
                           | grep -v "$BAR_LINE" \
                           || true
 
-                      FORWARDED=$size
+                      printf '%s' "$size" > "$SEENFILE"
                   }
 
                   #ctrl+c down the pty, which is the shutdown borger dev and concurrently
@@ -202,7 +223,14 @@ jobs:
 
                   harness_up()
                   {
-                      local line="" n=0
+                      local line="" n=0 arg="" cmd="$DEV_CMD"
+
+                      #script takes its command as one string for a shell to read, so the
+                      #arguments forwarded from the caller are quoted back into that string
+                      #rather than handed over as words
+                      for arg in "$@"; do
+                          cmd="$cmd $(printf '%q' "$arg")"
+                      done
 
                       if is_running; then
                           die "already up (pid $(read_pid "$PIDFILE"))"
@@ -230,7 +258,7 @@ jobs:
                       #to the caller's terminal. a background child still holding the
                       #step's stdout is a step that never finishes, and the point of this
                       #is to still be here when the next one starts
-                      script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $DEV_CMD" "$LOG" \
+                      script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $cmd" "$LOG" \
                           < "$KEYS" > /dev/null 2>&1 &
                       echo $! > "$PIDFILE"
 
@@ -243,7 +271,7 @@ jobs:
                           if ! is_running; then
                               stop
                               forward
-                              die "$DEV_CMD exited before it came up"
+                              die "$cmd exited before it came up"
                           fi
 
                           line=$(bar)
@@ -264,17 +292,24 @@ jobs:
                       fi
 
                       stop
+
+                      #after the wait in stop rather than before it, so what is printed is
+                      #the whole rest of the log: a dev server on its way out has things to
+                      #say about going, and the last of them are written between the ctrl+c
+                      #and the process leaving the table
+                      forward
                   }
 
                   case "${1:-}" in
                       up)
-                          harness_up
+                          shift
+                          harness_up "$@"
                           ;;
                       down)
                           harness_down
                           ;;
                       *)
-                          die "usage: borger_dev_harness up | borger_dev_harness down"
+                          die "usage: borger_dev_harness up [args...] | borger_dev_harness down"
                           ;;
                   esac
                   borger_dev_harness
@@ -296,19 +331,48 @@ jobs:
                   //
                   //"Load time:" is the client's own console line at the end of startup,
                   //so that line arriving is the whole test
+                  //
+                  //  borger_browser_harness          load it as a desktop browser
+                  //  borger_browser_harness android  load it as an android phone
 
-                  const { chromium } = require('playwright');
+                  const { chromium, devices } = require('playwright');
 
                   const URL = process.env.CLIENT_URL || 'https://localhost:5173';
                   const DONE = process.env.CLIENT_DONE || 'Load time:';
 
+                  //a phone is not one setting but a set of them that have to agree: the
+                  //user agent, the viewport, the pixel ratio and whether there is a touch
+                  //screen are all asked about separately by whatever is deciding this is
+                  //mobile, and a client that reads two of them and is told different
+                  //stories is a client under a machine that exists nowhere. playwright
+                  //keeps them together per device, so the device is what is named here
+                  //rather than the settings
+                  //
+                  //pixel 5 is a chromium descriptor, so it rides the browser already
+                  //installed for the desktop run
+                  const PROFILES = {
+                      desktop: {},
+                      android: devices['Pixel 5'],
+                  };
+
+                  const PROFILE = process.argv[2] || 'desktop';
+
                   async function main()
                   {
+                      if (!(PROFILE in PROFILES)) {
+                          throw new Error(`unknown profile '${PROFILE}', expected one of: ${Object.keys(PROFILES).join(', ')}`);
+                      }
+
+                      console.log(`profile: ${PROFILE}`);
+
                       //the dev server signs its own certificate. told to the context, the
                       //browser accepts it outright, which is steadier than driving the
                       //interstitial: headless chromium may not show one to click
                       const browser = await chromium.launch();
-                      const context = await browser.newContext({ ignoreHTTPSErrors: true });
+                      const context = await browser.newContext({
+                          ...PROFILES[PROFILE],
+                          ignoreHTTPSErrors: true,
+                      });
                       const page = await context.newPage();
 
                       //armed before the navigation, or a client that starts up faster
@@ -386,10 +450,26 @@ jobs:
               run: |
                   borger install
 
-            - name: "Browser harness: default options"
+            - name: "Browser harness: dev"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
                   borger_dev_harness up
+                  borger_browser_harness
+                  borger_dev_harness down
+
+            - name: "Browser harness: dev (Android/WebSocket fallback)"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness up
+                  borger_browser_harness android
+                  borger_dev_harness down
+
+            - name: "Browser harness: dev --session-replay"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness up --session_replay
                   borger_browser_harness
                   borger_dev_harness down
