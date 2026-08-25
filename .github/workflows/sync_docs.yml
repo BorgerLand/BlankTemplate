@@ -1,0 +1,26 @@
+name: Sync Docs
+
+on:
+    push:
+        branches: [master]
+    workflow_dispatch:
+
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: false
+
+permissions: {}
+
+defaults:
+    run:
+        shell: bash
+
+jobs:
+    sync-docs:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Redeploy borger.dev
+              env:
+                  GH_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+              run: |
+                  gh workflow run deploy.yml --repo BorgerLand/borger.dev --ref master

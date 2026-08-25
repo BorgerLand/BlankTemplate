@@ -332,6 +332,11 @@ jobs:
               run: |
                   borger install
 
+            - name: "Existing game: cargo doc"
+              working-directory: lifecycle_test_existing/borger/engine
+              run: |
+                  cargo doc --no-deps
+
             - name: "Existing game: eslint"
               working-directory: lifecycle_test_existing
               run: |
