@@ -305,15 +305,12 @@ jobs:
                   npx playwright install --with-deps chromium firefox webkit
                   echo "$RUNNER_TEMP/harness" >> "$GITHUB_PATH"
 
+            #this will pull the current public release of borger, not the ptr
+            #that needs testing, so don't bother to test it very thoroughly
+            #because it may be incompatible with the very picky harness
             - name: "New game: borger init"
               run: |
                   borger init lifecycle_test_new
-
-            - name: "New game: borger dev"
-              timeout-minutes: 5
-              working-directory: lifecycle_test_new
-              run: |
-                  borger_dev_harness
 
             - name: "New game: borger clean"
               working-directory: lifecycle_test_new
@@ -334,6 +331,11 @@ jobs:
               working-directory: lifecycle_test_existing
               run: |
                   borger install
+
+            - name: "Existing game: eslint"
+              working-directory: lifecycle_test_existing
+              run: |
+                  npx eslint --flag unstable_native_nodejs_ts_config
 
             - name: "Existing game: borger release"
               working-directory: lifecycle_test_existing
