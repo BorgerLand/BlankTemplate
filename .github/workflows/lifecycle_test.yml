@@ -28,10 +28,10 @@ jobs:
                   #!/usr/bin/env bash
                   set -euo pipefail
 
-                  #a borger dev server that outlives the shell which started it, so one CI
-                  #step can bring it up and a later one can take it down. everything the
-                  #two commands need to find each other again lives in a state directory
-                  #rather than in this process.
+                  #runs a command against a borger dev server, and owns that server from
+                  #one end to the other: it is started here, waited for here, and taken
+                  #back down here before this returns. nothing outlives the step that
+                  #called it, so there is nothing for the next step to find or clean up.
                   #
                   #cli.sh only draws its status bar on a terminal and a runner hasn't got
                   #one, so dev is run under a pty and the bar is read back out of the
@@ -39,18 +39,11 @@ jobs:
                   #and the client both up, which is the whole definition of started here:
                   #the bar is the only place that says so about both halves at once.
                   #
-                  #  borger_dev_harness up [args...]  start it here, return once the bar
-                  #                                   says ready twice. anything after up
-                  #                                   is passed on to borger dev
-                  #  borger_dev_harness down          ctrl+c it and print whatever it said
-                  #                                   after it came up, or fail if it isn't up
-
-                  STATE="${borger_dev_harness_STATE:-${RUNNER_TEMP:-/tmp}/borger_dev_harness}"
-                  LOG="$STATE/dev.log"
-                  KEYS="$STATE/keys"
-                  PIDFILE="$STATE/pid"
-                  HOLDFILE="$STATE/holder"
-                  SEENFILE="$STATE/forwarded"
+                  #  borger_dev_harness [dev args...] [-- command [args...]]
+                  #
+                  #anything before the -- is passed on to borger dev, and the command after
+                  #it is run once the bar says ready twice. with no command this is just a
+                  #check that dev comes up at all, which is worth a step of its own
 
                   DEV_CMD="${borger_dev_harness_CMD:-borger dev}"
 
@@ -65,10 +58,6 @@ jobs:
                   #only part worth reading, and it is nowhere near this big
                   TAIL_BYTES=20000
 
-                  #whoever holds the keyboard end of the pty open has to outlive the whole
-                  #job, since the far end hangs up when the last writer closes
-                  HOLD_FOR=86400
-
                   #a freshly allocated pty is zero by zero until somebody says otherwise,
                   #and script has no terminal of its own to copy a size from out here. the
                   #bar asks the terminal how wide it is and trims itself to fit, so a width
@@ -78,33 +67,22 @@ jobs:
                   PTY_ROWS=50
                   PTY_COLS=200
 
+                  #the scratch directory holding the typescript and the pty's keyboard, and
+                  #the dev server reading from it. declared up here because the teardown
+                  #can be reached, through the trap, before any of them are filled in
+                  STATE=""
+                  LOG=""
+                  DEV_PID=""
+
                   die()
                   {
                       printf 'borger_dev_harness: %s\n' "$*" >&2
                       exit 1
                   }
 
-                  read_pid()
-                  {
-                      local file="$1" pid=""
-
-                      if [ -r "$file" ]; then
-                          pid=$(cat "$file") || pid=""
-                      fi
-
-                      printf '%s' "$pid"
-                  }
-
                   is_running()
                   {
-                      local pid
-                      pid=$(read_pid "$PIDFILE")
-
-                      if [ -z "$pid" ]; then
-                          return 1
-                      fi
-
-                      kill -0 "$pid" 2>/dev/null
+                      [ -n "$DEV_PID" ] && kill -0 "$DEV_PID" 2>/dev/null
                   }
 
                   #the bar is drawn in colour and ends its lines with ESC D rather than a
@@ -140,23 +118,8 @@ jobs:
                   }
 
                   #how much of the log has already been printed to the step output. the
-                  #whole file is not reprinted every poll, only the part that is new
-                  #
-                  #kept in the state directory rather than in a variable because up and
-                  #down are two runs of this script and the part down is here to print is
-                  #exactly the part up never saw: everything the dev server said between
-                  #the bar going green and the ctrl+c, which had not been written yet when
-                  #the step that started it returned
-                  seen()
-                  {
-                      local n=""
-
-                      if [ -r "$SEENFILE" ]; then
-                          n=$(cat "$SEENFILE") || n=""
-                      fi
-
-                      printf '%s' "$(( n + 0 ))"
-                  }
+                  #whole file is not reprinted every pass, only the part that is new
+                  FORWARDED=0
 
                   #everything borger dev has said since the last look, minus the status bar
                   #itself, which is redrawn between every pair of log lines and would bury
@@ -168,31 +131,29 @@ jobs:
                   #avoid: this is here to be read while something is going wrong
                   forward()
                   {
-                      local size from
+                      local size
 
                       #tested before the redirect rather than after: a redirect from a
                       #file that isn't there is the shell's complaint, not the command's,
                       #and it is made before any 2>/dev/null on the line can catch it
-                      if [ ! -r "$LOG" ]; then
+                      if [ -z "$LOG" ] || [ ! -r "$LOG" ]; then
                           return 0
                       fi
-
-                      from=$(seen)
 
                       size=$(wc -c < "$LOG")
                       size=$(( size ))
 
-                      if (( size <= from )); then
+                      if (( size <= FORWARDED )); then
                           return 0
                       fi
 
-                      tail -c "+$(( from + 1 ))" "$LOG" 2>/dev/null \
-                          | head -c "$(( size - from ))" \
+                      tail -c "+$(( FORWARDED + 1 ))" "$LOG" 2>/dev/null \
+                          | head -c "$(( size - FORWARDED ))" \
                           | strip_escapes \
                           | grep -v "$BAR_LINE" \
                           || true
 
-                      printf '%s' "$size" > "$SEENFILE"
+                      FORWARDED=$size
                   }
 
                   #ctrl+c down the pty, which is the shutdown borger dev and concurrently
@@ -201,96 +162,24 @@ jobs:
                   #kill at this end could not address
                   stop()
                   {
-                      local pid holder
-
-                      pid=$(read_pid "$PIDFILE")
-                      holder=$(read_pid "$HOLDFILE")
-
-                      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                          printf '\003' > "$KEYS" 2>/dev/null || true
-
-                          while kill -0 "$pid" 2>/dev/null; do
-                              sleep 0.2
-                          done
-                      fi
-
-                      if [ -n "$holder" ]; then
-                          kill "$holder" 2>/dev/null || true
-                      fi
-
-                      rm -f "$KEYS" "$PIDFILE" "$HOLDFILE"
-                  }
-
-                  harness_up()
-                  {
-                      local line="" n=0 arg="" cmd="$DEV_CMD"
-
-                      #script takes its command as one string for a shell to read, so the
-                      #arguments forwarded from the caller are quoted back into that string
-                      #rather than handed over as words
-                      for arg in "$@"; do
-                          cmd="$cmd $(printf '%q' "$arg")"
-                      done
-
                       if is_running; then
-                          die "already up (pid $(read_pid "$PIDFILE"))"
+                          printf '\003' >&3 2>/dev/null || true
                       fi
 
-                      rm -rf "$STATE"
-                      mkdir -p "$STATE"
-                      mkfifo "$KEYS"
-
-                      #the fifo is the pty's keyboard and this is the finger resting on it.
-                      #both ends open in the background because opening either half of a
-                      #fifo blocks until the other one shows up
-                      sleep "$HOLD_FOR" > "$KEYS" &
-                      echo $! > "$HOLDFILE"
-
-                      #the log is made before anything can look for it, so the first poll
-                      #reads an empty file rather than a missing one
-                      : > "$LOG"
-
-                      #started right where it was called from, so the directory is the
-                      #caller's business and stays that way. the stty runs inside the pty,
-                      #which is the only place from which its size can be set.
-                      #
-                      #every handle it was given belongs to this state directory and none
-                      #to the caller's terminal. a background child still holding the
-                      #step's stdout is a step that never finishes, and the point of this
-                      #is to still be here when the next one starts
-                      script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $cmd" "$LOG" \
-                          < "$KEYS" > /dev/null 2>&1 &
-                      echo $! > "$PIDFILE"
-
-                      #no clock of its own: waiting forever is the caller's decision to
-                      #make, and the step that called this already carries a timeout. the
-                      #only way out other than ready is the dev server dying
-                      while true; do
-                          forward
-
-                          if ! is_running; then
-                              stop
-                              forward
-                              die "$cmd exited before it came up"
-                          fi
-
-                          line=$(bar)
-                          n=$(count_ready "$line")
-
-                          if (( n >= READY_NEEDED )); then
-                              return 0
-                          fi
-
-                          sleep 2
-                      done
+                      #it is a child of this shell, so waiting is how it is known to be
+                      #gone: no polling the process table, and no window where it has
+                      #exited but has not been reaped yet
+                      if [ -n "$DEV_PID" ]; then
+                          wait "$DEV_PID" 2>/dev/null || true
+                          DEV_PID=""
+                      fi
                   }
 
-                  harness_down()
+                  #every way out of here goes through this, so the dev server cannot be
+                  #left behind for the next step to trip over: not a failed command, not a
+                  #dev server that never came up, not the runner cancelling the job
+                  cleanup()
                   {
-                      if ! is_running; then
-                          die "not up, nothing to take down"
-                      fi
-
                       stop
 
                       #after the wait in stop rather than before it, so what is printed is
@@ -298,20 +187,86 @@ jobs:
                       #say about going, and the last of them are written between the ctrl+c
                       #and the process leaving the table
                       forward
+
+                      if [ -n "$STATE" ]; then
+                          rm -rf "$STATE"
+                      fi
                   }
 
-                  case "${1:-}" in
-                      up)
+                  #the command is built as one string because that is how script takes it,
+                  #for a shell of its own to read. an argument forwarded from the caller is
+                  #quoted back into that string rather than handed over as a word
+                  CMD="$DEV_CMD"
+
+                  while (( $# )); do
+                      if [ "$1" = "--" ]; then
                           shift
-                          harness_up "$@"
-                          ;;
-                      down)
-                          harness_down
-                          ;;
-                      *)
-                          die "usage: borger_dev_harness up [args...] | borger_dev_harness down"
-                          ;;
-                  esac
+                          break
+                      fi
+
+                      CMD="$CMD $(printf '%q' "$1")"
+                      shift
+                  done
+
+                  trap cleanup EXIT
+                  trap 'exit 130' INT TERM HUP
+
+                  STATE=$(mktemp -d)
+                  LOG="$STATE/dev.log"
+                  KEYS="$STATE/keys"
+
+                  #the fifo is the pty's keyboard and this fd is the finger resting on it.
+                  #held open for reading as well as writing so the open cannot block on a
+                  #reader turning up, and so the far end never sees the keyboard hang up,
+                  #which is what the last writer closing looks like from there
+                  mkfifo "$KEYS"
+                  exec 3<> "$KEYS"
+
+                  #the log is made before anything can look for it, so the first pass reads
+                  #an empty file rather than a missing one
+                  : > "$LOG"
+
+                  #started right where it was called from, so the directory is the caller's
+                  #business and stays that way. the stty runs inside the pty, which is the
+                  #only place from which its size can be set.
+                  #
+                  #its output goes nowhere: everything worth reading is in the typescript
+                  #already, and forward is what decides when any of it is printed
+                  script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $CMD" "$LOG" \
+                      < "$KEYS" > /dev/null 2>&1 &
+                  DEV_PID=$!
+
+                  #no clock of its own: waiting forever is the caller's decision to make,
+                  #and the step that called this already carries a timeout. the only way out
+                  #other than ready is the dev server dying
+                  while true; do
+                      forward
+
+                      #the last of what it said on its way out comes before the complaint
+                      #about it, since that is the half that says why
+                      if ! is_running; then
+                          stop
+                          forward
+                          die "$CMD exited before it came up"
+                      fi
+
+                      if (( $(count_ready "$(bar)") >= READY_NEEDED )); then
+                          break
+                      fi
+
+                      sleep 2
+                  done
+
+                  #whatever was asked for, now that there is something to ask it of. its
+                  #status is this script's status, and the dev server comes down on the way
+                  #out either way
+                  STATUS=0
+
+                  if (( $# )); then
+                      "$@" || STATUS=$?
+                  fi
+
+                  exit "$STATUS"
                   borger_dev_harness
                   chmod +x "$RUNNER_TEMP/bin/borger_dev_harness"
                   echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
@@ -427,8 +382,7 @@ jobs:
               timeout-minutes: 5
               working-directory: lifecycle_test_new
               run: |
-                  borger_dev_harness up
-                  borger_dev_harness down
+                  borger_dev_harness
 
             - name: "New game: borger clean"
               working-directory: lifecycle_test_new
@@ -459,22 +413,16 @@ jobs:
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
-                  borger_dev_harness up
-                  borger_browser_harness
-                  borger_dev_harness down
+                  borger_dev_harness -- borger_browser_harness
 
             - name: "Browser harness: dev (Android/WebSocket fallback)"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
-                  borger_dev_harness up
-                  borger_browser_harness android
-                  borger_dev_harness down
+                  borger_dev_harness -- borger_browser_harness android
 
             - name: "Browser harness: dev --session-replay"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
               run: |
-                  borger_dev_harness up --session_replay
-                  borger_browser_harness
-                  borger_dev_harness down
+                  borger_dev_harness --session-replay -- borger_browser_harness
