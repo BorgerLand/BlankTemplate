@@ -4,14 +4,362 @@ on:
     workflow_dispatch:
     pull_request:
 
+concurrency:
+    group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+    cancel-in-progress: true
+
+defaults:
+    run:
+        shell: bash
+
 jobs:
-    test-install:
+    lifecycle-test:
         runs-on: ubuntu-latest
         steps:
-            - name: Run borger installer
+            - name: Eat borger
               run: |
                   curl -fsSL https://eat.borger.dev | bash -s -- -y
                   echo "$HOME/.borger" >> "$GITHUB_PATH"
 
-            - name: hello there
-              run: borger help
+            - name: Install borger dev harness
+              run: |
+                  mkdir -p "$RUNNER_TEMP/harness"
+                  cat > "$RUNNER_TEMP/harness/borger_dev_harness" <<'borger_dev_harness'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+
+                  READY_WORD="ready"
+                  READY_NEEDED=2
+                  BAR_LINE='^[[:space:]]*server:[[:space:]]'
+                  TAIL_BYTES=20000
+
+                  #the bar trims itself to the terminal width and a fresh pty is zero by
+                  #zero: too narrow and it is drawn empty, never saying ready however ready
+                  #everything is
+                  PTY_ROWS=50
+                  PTY_COLS=200
+
+                  #playwright is installed beside this script, not in the game under test
+                  export NODE_PATH="$(dirname "$(readlink -f "$0")")/node_modules"
+
+                  #the trap can reach the teardown before any of these are filled in
+                  STATE=""
+                  LOG=""
+                  DEV_PID=""
+
+                  die()
+                  {
+                      printf 'borger_dev_harness: %s\n' "$*" >&2
+                      exit 1
+                  }
+
+                  is_running()
+                  {
+                      [ -n "$DEV_PID" ] && kill -0 "$DEV_PID" 2>/dev/null
+                  }
+
+                  #the bar is drawn in colour and ends its lines with ESC D rather than a
+                  #newline, hence the carriage returns and the second expression. line
+                  #buffered because one end of this is a live stream
+                  strip_escapes()
+                  {
+                      stdbuf -oL tr '\r' '\n' \
+                          | sed -u \
+                              -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' \
+                              -e 's/\x1b.//g' \
+                              -e '/^[[:space:]]*$/d' \
+                          || true
+                  }
+
+                  bar()
+                  {
+                      local out
+                      out=$(tail -c "$TAIL_BYTES" "$LOG" 2>/dev/null | strip_escapes | tail -n 1) || out=""
+                      printf '%s' "$out"
+                  }
+
+                  #counted here rather than through grep so an empty bar is a count of zero
+                  #instead of a failed pipeline, which pipefail would take the script down for
+                  count_ready()
+                  {
+                      local rest="$1" n=0
+
+                      while [[ "$rest" == *"$READY_WORD"* ]]; do
+                          rest="${rest#*"$READY_WORD"}"
+                          n=$(( n + 1 ))
+                      done
+
+                      printf '%s' "$n"
+                  }
+
+                  log_stream()
+                  {
+                      strip_escapes | grep --line-buffered -v "$BAR_LINE" || true
+                  }
+
+                  #ctrl+c into the pty rather than a kill from here: the line discipline
+                  #turns the byte into a SIGINT aimed at everything in that terminal's
+                  #foreground, which is the shutdown borger dev and concurrently are written
+                  #against
+                  stop()
+                  {
+                      if is_running; then
+                          printf '\003' >&3 2>/dev/null || true
+                      fi
+
+                      if [ -n "$DEV_PID" ]; then
+                          wait "$DEV_PID" 2>/dev/null || true
+                          DEV_PID=""
+                      fi
+                  }
+
+                  cleanup()
+                  {
+                      stop
+                      wait 2>/dev/null || true
+
+                      if [ -n "$STATE" ]; then
+                          rm -rf "$STATE"
+                      fi
+                  }
+
+                  #script runs its command through a shell of its own, so arguments are
+                  #quoted back into the string rather than passed as words
+                  CMD="borger dev"
+
+                  for arg in "$@"; do
+                      CMD="$CMD $(printf '%q' "$arg")"
+                  done
+
+                  #a dev server that outlives its step holds port 5173 and answers the next
+                  #step, which reads as a bar that went green before anything was built
+                  trap cleanup EXIT
+                  trap 'exit 130' INT TERM HUP
+
+                  STATE=$(mktemp -d)
+                  LOG="$STATE/dev.log"
+                  KEYS="$STATE/keys"
+                  OUT="$STATE/out"
+
+                  mkfifo "$KEYS" "$OUT"
+
+                  #held open for reading as well as writing so the open cannot block and the
+                  #far end never sees the keyboard hang up, which is what the last writer
+                  #closing looks like from there
+                  exec 3<> "$KEYS"
+
+                  : > "$LOG"
+
+                  #backgrounded because opening either half of a fifo waits for the other,
+                  #and these two meet in the middle
+                  log_stream < "$OUT" &
+
+                  #the bar is only drawn on a terminal, and only sized from inside one
+                  script -q -f -c "stty rows $PTY_ROWS cols $PTY_COLS; $CMD" "$LOG" \
+                      < "$KEYS" > "$OUT" 2>&1 &
+                  DEV_PID=$!
+
+                  while true; do
+                      if ! is_running; then
+                          die "$CMD exited before it came up"
+                      fi
+
+                      if (( $(count_ready "$(bar)") >= READY_NEEDED )); then
+                          break
+                      fi
+
+                      sleep 2
+                  done
+
+                  STATUS=0
+
+                  #a file rather than node's stdin: a script read from stdin is evaluated in
+                  #the global scope, where a top level const shadows the global of the same
+                  #name for every module in the process, playwright's own included
+                  cat > "$STATE/browser_test.js" <<'browser_test'
+                  'use strict';
+
+                  const playwright = require('playwright');
+
+                  const URL = 'https://localhost:5173';
+                  const DONE = 'Load time:';
+
+                  //written synchronously because these are pipes under actions, where node
+                  //writes them asynchronously and the process.exit below lands before
+                  //whatever is still queued on one
+                  const say = (line, fd = 1) => require('fs').writeSync(fd, `${line}\n`);
+
+                  //the client picks its transport off the user agent, so the descriptor is
+                  //what puts the second chromium on websockets. firefox and webkit are not
+                  //held to either transport
+                  const BROWSERS =
+                  {
+                      'chromium-desktop': { browser: 'chromium', webTransport: true },
+                      'chromium-android': { browser: 'chromium', device: playwright.devices['Pixel 5'], webTransport: false },
+                      firefox: { browser: 'firefox' },
+                      webkit: { browser: 'webkit' },
+                  };
+
+                  //the dev server sends the cross origin isolation headers that shared
+                  //memory needs only when it is not in singlethreaded mode, so the flag dev
+                  //got decides this
+                  const SHARED_ARRAY_BUFFER = !process.argv.includes('--singlethreaded');
+
+                  //chromium and webkit leave the format string in the message with the
+                  //styles trailing, firefox substitutes them out and pads the colon with
+                  //spaces
+                  function compat(text, feature)
+                  {
+                      const found = new RegExp(`${feature}\\s*:\\s*(true|false)`).exec(text.replaceAll('%c', ''));
+
+                      return found && found[1] === 'true';
+                  }
+
+                  async function run(label, profile)
+                  {
+                      const browser = await playwright[profile.browser].launch();
+                      const expected = { SharedArrayBuffer: SHARED_ARRAY_BUFFER };
+                      const said = {};
+
+                      if ('webTransport' in profile) {
+                          expected.WebTransport = profile.webTransport;
+                      }
+
+                      try
+                      {
+                          const context = await browser.newContext({
+                              ...profile.device,
+
+                              //the dev server signs its own certificate, and a headless
+                              //browser has no interstitial there is any way to click through
+                              ignoreHTTPSErrors: true,
+                          });
+                          const page = await context.newPage();
+
+                          //armed before the navigation, or a client that starts up faster
+                          //than this gets a listener attached would never be seen to finish
+                          await new Promise((resolve, reject) => {
+                              const fail = why => reject(new Error(`[${label}] ${why}`));
+
+                              page.on('console', msg =>
+                              {
+                                  const text = msg.text();
+                                  say(`[${label}] ${text}`);
+
+                                  for (const feature of Object.keys(expected))
+                                  {
+                                      const answer = compat(text, feature);
+                                      if (answer !== null) said[feature] = answer;
+                                  }
+
+                                  if (!text.includes(DONE)) return;
+
+                                  //compared here rather than as the lines arrive so a client
+                                  //that never logs one at all is a failure too
+                                  for (const [feature, want] of Object.entries(expected))
+                                      if (said[feature] !== want)
+                                          return fail(`${feature} was ${said[feature] ?? 'never logged'}, expected ${want}`);
+
+                                  resolve();
+                              });
+
+                              //neither of these reaches the console handler above:
+                              //playwright hands them out as events of their own
+                              page.on('pageerror', err => fail(`uncaught: ${err.message}`));
+                              page.on('requestfailed', req =>
+                                  fail(`request failed: ${req.url()} ${req.failure().errorText}`));
+
+                              //commit rather than load: a wasm client keeps loading long
+                              //after it is up, and waiting on load would outlast the console
+                              //line this is here for. no clock either, the step has one
+                              page.goto(URL, { waitUntil: 'commit', timeout: 0 }).catch(err => fail(err.message));
+                          });
+                      }
+                      finally
+                      {
+                          await browser.close();
+                      }
+                  }
+
+                  //exited rather than left to reject: the first failure ends the run instead
+                  //of waiting out the browsers that have not finished
+                  Promise.all(Object.entries(BROWSERS).map(entry => run(...entry))).catch(err =>
+                  {
+                      say(err.stack || err, 2);
+                      process.exit(1);
+                  });
+                  browser_test
+
+                  node "$STATE/browser_test.js" "$@" || STATUS=$?
+
+                  exit "$STATUS"
+                  borger_dev_harness
+                  chmod +x "$RUNNER_TEMP/harness/borger_dev_harness"
+
+                  cd "$RUNNER_TEMP/harness"
+                  npm init -y > /dev/null
+
+                  #the postinstall download is skipped and the browsers are then asked for
+                  #by name, which is the only way to get the system libraries they need
+                  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund playwright
+                  npx playwright install --with-deps chromium firefox webkit
+                  echo "$RUNNER_TEMP/harness" >> "$GITHUB_PATH"
+
+            - name: "New game: borger init"
+              run: |
+                  borger init lifecycle_test_new
+
+            - name: "New game: borger dev"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_new
+              run: |
+                  borger_dev_harness
+
+            - name: "New game: borger clean"
+              working-directory: lifecycle_test_new
+              run: |
+                  borger clean <<< "y"
+
+            - name: "New game: delete"
+              run: |
+                  rm -rf lifecycle_test_new
+
+            - name: "Existing game: clone"
+              uses: actions/checkout@v7
+              with:
+                  fetch-depth: 1
+                  path: lifecycle_test_existing
+
+            - name: "Existing game: borger install"
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger install
+
+            - name: "Existing game: borger release"
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger release <<< "y"
+
+            - name: "Existing game: borger dev"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness
+
+            - name: "Existing game: borger dev --session-replay"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness --session-replay
+
+            - name: "Existing game: borger dev --singlethreaded"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness --singlethreaded
+
+            - name: "Existing game: borger dev --session-replay --singlethreaded"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger_dev_harness --session-replay --singlethreaded
