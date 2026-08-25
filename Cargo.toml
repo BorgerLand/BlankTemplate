@@ -8,11 +8,6 @@ edition.workspace = true
 [lib]
 path = "src/simulation/lib.rs"
 
-[features]
-server = ["borger/server"]
-client = ["borger/client"]
-session_replay = []
-
 [dependencies]
 borger = { path = "borger/engine" }
 log.workspace = true
@@ -44,6 +39,11 @@ opt-level = 3 #optimize server for speed
 [profile.client-release]
 inherits = "release"
 opt-level = "s" #optimize client for size
+
+[features]
+server_internal_only_dont_use = ["borger/server"]
+client_internal_only_dont_use = ["borger/client"]
+session_replay = []
 
 ##---Workspace---##
 
