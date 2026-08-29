@@ -347,6 +347,12 @@ jobs:
               run: |
                   borger release <<< "y"
 
+            - name: "Existing game: borger dev --check"
+              timeout-minutes: 5
+              working-directory: lifecycle_test_existing
+              run: |
+                  borger dev --check
+
             - name: "Existing game: borger dev"
               timeout-minutes: 5
               working-directory: lifecycle_test_existing
