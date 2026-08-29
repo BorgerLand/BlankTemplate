@@ -19,11 +19,6 @@ export default [
 				tsconfigRootDir: import.meta.dirname,
 			},
 		},
-		settings: {
-			react: {
-				version: "detect",
-			},
-		},
 		rules: {
 			"@typescript-eslint/no-explicit-any": "off",
 
