@@ -17,6 +17,7 @@ defaults:
 
 jobs:
     sync-docs:
+        if: github.repository == 'BorgerLand/BlankTemplate'
         runs-on: ubuntu-latest
         steps:
             - name: Redeploy borger.dev
