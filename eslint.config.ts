@@ -15,7 +15,7 @@ export default [
 		files: ["**/*.{ts,tsx}"],
 		languageOptions: {
 			parserOptions: {
-				project: ["tsconfig.presentation.json", "borger/tsconfig.json"],
+				project: ["tsconfig.presentation.json", "tsconfig.node.json"],
 				tsconfigRootDir: import.meta.dirname,
 			},
 		},

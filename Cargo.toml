@@ -14,6 +14,12 @@ log.workspace = true
 glam.workspace = true
 rapier3d.workspace = true
 
+
+
+
+
+#the rest should Just Work™
+
 ##---Profiles---##
 
 #dev build profile
@@ -50,6 +56,7 @@ session_replay = []
 [workspace]
 resolver = "2"
 members = [
+	"borger/plugins/sdk/rs",
 	"borger/engine",
 	"borger/server",
 	"borger/client/rs",

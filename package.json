@@ -1,5 +1,9 @@
 {
+	"dependencies": {
+		"@borger/event_dispatcher": "file:borger/plugins/event_dispatcher"
+	},
 	"devDependencies": {
+		"@borger/plugin_sdk": "file:borger/plugins/sdk/ts",
 		"@eslint/js": "*",
 		"@types/node": "^24.0.0",
 		"@vitejs/plugin-basic-ssl": "*",

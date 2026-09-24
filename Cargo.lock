@@ -153,10 +153,11 @@ name = "borger"
 version = "0.0.0"
 dependencies = [
  "atomicbox",
+ "borger_event_dispatcher",
+ "borger_plugin_sdk",
  "borger_procmac",
  "glam",
  "log",
- "num_enum",
  "rapier3d",
  "serde",
  "tokio",
@@ -165,11 +166,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "borger_event_dispatcher"
+version = "0.0.0"
+dependencies = [
+ "borger_plugin_sdk",
+ "borger_procmac",
+]
+
+[[package]]
+name = "borger_plugin_sdk"
+version = "0.0.0"
+dependencies = [
+ "borger_procmac",
+ "glam",
+]
+
+[[package]]
 name = "borger_procmac"
 version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "serde_json",
  "syn 3.0.4",
 ]
 
@@ -275,6 +293,7 @@ name = "client_rs"
 version = "0.0.0"
 dependencies = [
  "borger",
+ "borger_plugin_sdk",
  "console_log",
  "game",
  "glam",
@@ -957,27 +976,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num_enum"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
-dependencies = [
- "num_enum_derive",
- "rustversion",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "octets"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1417,10 +1415,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_json"
+version = "1.0.151"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
+]
+
+[[package]]
 name = "server"
 version = "0.0.0"
 dependencies = [
  "borger",
+ "borger_plugin_sdk",
  "clap",
  "futures-util",
  "game",
@@ -2130,3 +2142,9 @@ dependencies = [
  "quote",
  "syn 3.0.4",
 ]
+
+[[package]]
+name = "zmij"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
