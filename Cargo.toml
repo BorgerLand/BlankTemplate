@@ -56,11 +56,8 @@ session_replay = []
 [workspace]
 resolver = "2"
 members = [
-	"borger/plugins/sdk/rs",
-	"borger/engine",
 	"borger/server",
 	"borger/client/rs",
-	"borger/procmac"
 ]
 
 [workspace.package]

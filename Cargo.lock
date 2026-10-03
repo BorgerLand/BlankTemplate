@@ -153,24 +153,14 @@ name = "borger"
 version = "0.0.0"
 dependencies = [
  "atomicbox",
- "borger_event_dispatcher",
  "borger_plugin_sdk",
  "borger_procmac",
  "glam",
  "log",
- "rapier3d",
  "serde",
  "tokio",
  "wasm_thread",
  "web-time",
-]
-
-[[package]]
-name = "borger_event_dispatcher"
-version = "0.0.0"
-dependencies = [
- "borger_plugin_sdk",
- "borger_procmac",
 ]
 
 [[package]]
