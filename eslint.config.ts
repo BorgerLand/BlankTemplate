@@ -56,6 +56,16 @@ export default [
 			],
 		},
 	},
+	{
+		//built in plugins are resolved through npm instead of tsconfig.
+		//the intent is to eventually move them to true npm packages
+		files: ["borger/plugins/*/src/**/*.ts"],
+		languageOptions: {
+			parserOptions: {
+				project: false,
+			},
+		},
+	},
 	prettierConflicts,
 	...ciConfig,
 ] satisfies ConfigArray;
