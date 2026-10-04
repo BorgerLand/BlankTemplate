@@ -15,7 +15,14 @@ export default [
 		files: ["**/*.{ts,tsx}"],
 		languageOptions: {
 			parserOptions: {
-				project: ["tsconfig.presentation.json", "tsconfig.node.json"],
+				project: [
+					"tsconfig.presentation.json",
+					"tsconfig.node.json",
+
+					//built in plugins are resolved through npm instead of tsconfig.
+					//the intent is to eventually move them to true npm packages
+					"borger/plugins/*/tsconfig.json",
+				],
 				tsconfigRootDir: import.meta.dirname,
 			},
 		},
@@ -54,16 +61,6 @@ export default [
 					caughtErrorsIgnorePattern: "^_",
 				},
 			],
-		},
-	},
-	{
-		//built in plugins are resolved through npm instead of tsconfig.
-		//the intent is to eventually move them to true npm packages
-		files: ["borger/plugins/*/src/**/*.ts"],
-		languageOptions: {
-			parserOptions: {
-				project: false,
-			},
 		},
 	},
 	prettierConflicts,
