@@ -345,6 +345,7 @@ jobs:
             - name: "Existing game: cargo fmt"
               working-directory: lifecycle_test_existing
               run: |
+                  rustup component add rustfmt
                   git ls-files -z '*.rs' | xargs -0 rustfmt --check
 
             - name: "Existing game: borger release"
